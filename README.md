@@ -13,7 +13,8 @@ Next things to do
 * Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games)
 * Use gzip parser to work with gzip http answers
 * Add some timeouts (as python impl - I think more "human"-behaviour)
-* Test for proper deamon work
+* Test for proper daemon work
+* Add some AI(?) - priority maps. Enter for wishlisted rather than followed
 
 External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
