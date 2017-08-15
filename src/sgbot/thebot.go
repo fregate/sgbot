@@ -354,6 +354,8 @@ func (b *TheBot) parseGiveaways() (err error) {
 // Check - check page and enter for gifts (repeat by timeout)
 func (b *TheBot) Check() (err error) {
         stdlog.Println("bot checking...")
+        
+        defer b.clean()
 
         err = b.getUserInfo()
         if err != nil {
@@ -366,7 +368,6 @@ func (b *TheBot) Check() (err error) {
                 return
         }
 
-        b.clean()
         stdlog.Println("bot check finished")
         return nil
 }
