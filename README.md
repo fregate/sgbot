@@ -15,6 +15,8 @@ Next things to do
 * Add some timeouts (as python impl - I think more "human"-behaviour)
 * Test for proper daemon work
 * Add some AI(?) - priority maps. Enter for wishlisted rather than followed
+* Add some notifications to user through email (win gift, need to refresh cookies)
+* Reload lists (or parse account) on the fly (do not need to restart daemon)
 
 External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
