@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	gomail "gopkg.in/gomail.v2"
+
 	"config"
 
 	"github.com/PuerkitoBio/goquery"
@@ -36,18 +38,26 @@ type GiveAway struct {
 
 type mailinfo struct {
 	SmtpServer       string `json:"smtp"`
-	Port             uint16 `json:"port"`
+	Port             int    `json:"port"`
 	SmtpUsername     string `json:"username"`
 	SmtpUserpassword string `json:"password"`
 }
 
 type cfg struct {
 	SteamProfile string `json:"profile"`
+	SendDigest   bool   `json:digest`
 
-	SmtpSettings      mailinfo `json:"mail"`
-	EmailSubjectPlus  string   `json:"subjectplus"`
-	EmailSubjectMinus string   `json:"subjectminus"`
-	EmailRecipient    string   `json:"recipient"`
+	SmtpSettings    mailinfo `json:"mail"`
+	EmailSubjectTag string   `json:"subjecttag"`
+	EmailRecipient  string   `json:"recipient"`
+}
+
+func (c mailinfo) isValid() bool {
+	return c.Port != 0 && c.SmtpServer != "" && c.SmtpUsername != ""
+}
+
+func (c cfg) isMailValid() bool {
+	return c.SmtpSettings.isValid() && c.EmailRecipient != ""
 }
 
 // {"type":"success","entry_count":"108","points":"147"}
@@ -90,6 +100,7 @@ type TheBot struct {
 	client   *http.Client
 
 	botConfig cfg
+	dialer    *gomail.Dialer
 
 	gamesWhitelist map[uint64]string
 
@@ -152,6 +163,10 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 				stdlog.Println(err)
 			}
 		}
+
+		if b.botConfig.isMailValid() {
+			b.dialer = gomail.NewDialer(b.botConfig.SmtpSettings.SmtpServer, b.botConfig.SmtpSettings.Port, b.botConfig.SmtpSettings.SmtpUsername, b.botConfig.SmtpSettings.SmtpUserpassword)
+		}
 	}
 
 	// read games lists
@@ -170,9 +185,33 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 			b.gamesWhitelist[q] = v.(string)
 		}
 	}
+
+	if len(b.gamesWhitelist) == 0 {
+		stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
+		return &BotError{time.Now(), "no games to win"}
+	}
+
 	stdlog.Printf("successfully load games list [total entries:%d]\n", len(b.gamesWhitelist))
 
 	return nil
+}
+
+func (b *TheBot) sendMail(subject, msg string) (err error) {
+	if b.dialer == nil {
+		return nil
+	}
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", b.botConfig.SmtpSettings.SmtpUsername)
+	m.SetHeader("To", b.botConfig.EmailRecipient)
+	m.SetHeader("Subject", b.botConfig.EmailSubjectTag, subject)
+	m.SetBody("text/plain", msg)
+
+	err = b.dialer.DialAndSend(m)
+	if err != nil {
+		errlog.Println(err)
+	}
+	return
 }
 
 func (b *TheBot) getSteamLists() (err error) {
@@ -386,10 +425,10 @@ func (b *TheBot) parseGiveaways() (err error) {
 
 		// get giveaway timestamp
 		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
-		/* if !ok {
+		if !ok {
 			stdlog.Println("can't parse timestamp for", gid)
 			return
-		} */
+		}
 
 		t, _ := strconv.ParseInt(y, 10, 64)
 
@@ -399,7 +438,7 @@ func (b *TheBot) parseGiveaways() (err error) {
 	})
 
 	stdlog.Println("found giveaways", len(giveaways))
-	for _, g := range giveaways {
+	for t, g := range giveaways {
 		// add some human behaviour - pause bot for a few seconds (3-10)
 		d := time.Second * time.Duration(rand.Intn(7)+3)
 		if t.After(time.Now().Add(d)) {
