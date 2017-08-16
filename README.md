@@ -15,7 +15,7 @@ Next things to do
 * Add some timeouts (as python impl - I think more "human"-behavior) +
 * Test for proper daemon work
 * Add some AI(?) - priority maps. Enter for wishlisted rather than followed
-* Add some notifications to user through email (win gift, need to refresh cookies)
+* Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)
 * Reload lists (or parse account) on the fly (without daemon restart)
 
 External imports
