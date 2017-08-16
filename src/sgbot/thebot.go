@@ -86,7 +86,6 @@ const (
 type TheBot struct {
 	userName string
 	token    string
-	points   int
 	baseUrl  *url.URL
 	client   *http.Client
 
@@ -100,7 +99,6 @@ type TheBot struct {
 }
 
 func (b *TheBot) clean() {
-	b.points = -1
 	b.userName = ""
 	b.token = ""
 	b.currentUrl = ""
@@ -286,14 +284,13 @@ func (b *TheBot) getUserInfo() (err error) {
 	}
 
 	b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-	b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
 	b.token, _ = b.currentDocument.Find("input[name='xsrf_token']").First().Attr("value")
 
-	if b.userName == "" || b.points < 0 || b.token == "" {
+	if b.userName == "" || b.token == "" {
 		return &BotError{time.Now(), "no user information"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, b.points, b.token)
+	stdlog.Printf("receive info [user:%s][token:%s]\n", b.userName, b.token)
 
 	return nil
 }
@@ -403,7 +400,7 @@ func (b *TheBot) parseGiveaways() (err error) {
 
 	stdlog.Println("found giveaways", len(giveaways))
 	for _, g := range giveaways {
-		// add some human behavior - pause bot for a few seconds (3-10)
+		// add some human behaviour - pause bot for a few seconds (3-10)
 		time.Sleep(time.Second * time.Duration(rand.Intn(7)+3))
 
 		status, err := b.enterGiveaway(g)
