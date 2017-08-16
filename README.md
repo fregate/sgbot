@@ -21,3 +21,4 @@ Next things to do
 External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
 * https://github.com/takama/daemon - golang daemon
+* http://gopkg.in/gomail.v2 - mailer for spam
