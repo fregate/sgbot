@@ -1,0 +1,14 @@
+{
+    "profile" : "NAME", // ../id/NAME/wishlist
+
+    "mail" : {
+        "smtp" : "127.0.0.1",
+        "port" : 25,
+        "username" : "aaa",
+        "password" : "bbb"
+    },
+
+    "subjectplus" : "[SteamGiftsBOT] You've won something!",
+    "subjectminus" : "[SteamGiftsBOT] Something wrong",
+    "recipient" : "your@mail.com"
+}
