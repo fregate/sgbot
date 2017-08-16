@@ -13,7 +13,7 @@ Next things to do
 * ~~Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games)~~
 * Use gzip parser to work with gzip http answers
 * ~~Add some timeouts (as python impl - I think more "human"-behavior)~~
-* Test for proper daemon work
+* ~~Test for proper daemon work in linux~~ 
 * Add some AI(?) - priority maps. Enter for wishlisted rather than followed
 * Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)
 * Reload lists (or parse account) on the fly (without daemon restart)
@@ -22,6 +22,13 @@ Next things to do
 1. If you want to parse your steam profile - set it in config.json "profile". You need only name, not whole URL. Or leave it empty (remove).
 2. Fill gameslist.json with games. "SteamID":"Name", Name - optional: used only for logs (leave it empty "" or remove)
 3. Fill cookies.json. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value"
+4. To run as daemon (tested only for linux)
+  * sudo ./bot install
+  * Set service working dir for ./bot path (/etc/systemd/system/sgbotservice.service -> [Service] -> WorkingDirectory=/path/to/executable
+  * (sudo) systemctl daemon-reload
+  * sudo service sgbotservice start
+  * sudo service sgbotservice status
+  * profit!
 
 # External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
