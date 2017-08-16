@@ -401,7 +401,10 @@ func (b *TheBot) parseGiveaways() (err error) {
 	stdlog.Println("found giveaways", len(giveaways))
 	for _, g := range giveaways {
 		// add some human behaviour - pause bot for a few seconds (3-10)
-		time.Sleep(time.Second * time.Duration(rand.Intn(7)+3))
+		d := time.Second * time.Duration(rand.Intn(7)+3)
+		if t.After(time.Now().Add(d)) {
+			time.Sleep(d)
+		}
 
 		status, err := b.enterGiveaway(g)
 		if err != nil {
