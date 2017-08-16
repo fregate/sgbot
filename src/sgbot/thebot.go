@@ -1,373 +1,442 @@
 package main
 
 import (
-        "strings"
-        "fmt"
-        "time"
-        "net/url"
-        "net/http"
-        "net/http/cookiejar"
-        "strconv"
-        "io/ioutil"
-        "bytes"
-        "encoding/json"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"math/rand"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
-        "config"
-        "github.com/PuerkitoBio/goquery"
+	"config"
+
+	"github.com/PuerkitoBio/goquery"
 )
 
 type BotError struct {
-        When time.Time
-        What string
+	When time.Time
+	What string
 }
 
 func (e *BotError) Error() string {
-        return fmt.Sprintf("at %v, %s", e.When, e.What)
+	return fmt.Sprintf("at %v, %s", e.When, e.What)
 }
 
 type GiveAway struct {
-        SGID string
-        GID uint64
-        Url string
-        Name string
+	SGID string
+	GID  uint64
+	Url  string
+	Name string
 }
 
-//{"type":"success","entry_count":"108","points":"147"}
+type mailinfo struct {
+	SmtpServer       string `json:"smtp"`
+	Port             uint16 `json:"port"`
+	SmtpUsername     string `json:"username"`
+	SmtpUserpassword string `json:"password"`
+}
+
+type cfg struct {
+	SteamProfile string `json:"profile"`
+
+	SmtpSettings      mailinfo `json:"mail"`
+	EmailSubjectPlus  string   `json:"subjectplus"`
+	EmailSubjectMinus string   `json:"subjectminus"`
+	EmailRecipient    string   `json:"recipient"`
+}
+
+// {"type":"success","entry_count":"108","points":"147"}
 type PostResponse struct {
-        Type string //'json:type'
-        Entries string //'json:entry_count'
-        Points string //'json:points'
+	Type    string //'json:type'
+	Entries string //'json:entry_count'
+	Points  string //'json:points'
 }
 
 type pair struct {
-        name  string
-        value string
+	name  string
+	value string
 }
 
 var requestHeaders = []pair{
-        pair{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-        //pair{name: "Accept-Encoding", value: "gzip, deflate, br"},
-        pair{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
-        pair{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
-        pair{name: "X-Requested-With", value: "XMLHttpRequest"},
+	pair{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
+	//pair{name: "Accept-Encoding", value: "gzip, deflate, br"},
+	pair{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
+	pair{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
+	pair{name: "X-Requested-With", value: "XMLHttpRequest"},
 }
 
 const (
-        Success string = "green"
-        Warning string = "yellow"
-        Error   string = "red"
-        Info    string = "magenta"
+	Success string = "green"
+	Warning string = "yellow"
+	Error   string = "red"
+	Info    string = "magenta"
 
-        baseUrl string = "https://www.steamgifts.com"
+	baseUrl             string = "https://www.steamgifts.com"
+	baseSteamProfileUrl string = "http://steamcommunity.com/id/"
+	steamWishlist       string = "/wishlist/"
+	steamFollowed       string = "/followedgames/"
 )
 
 // TheBot - class for work with SteamGifts pages
 type TheBot struct {
-        userName  string
-        token string
-        points    int
-        baseUrl   *url.URL
-        client *http.Client
+	userName string
+	token    string
+	points   int
+	baseUrl  *url.URL
+	client   *http.Client
 
-        gamesWhitelist map[uint64]string
+	botConfig cfg
 
-        // page cache
-        currentDocument *goquery.Document
-        currentUrl string
+	gamesWhitelist map[uint64]string
+
+	// page cache
+	currentDocument *goquery.Document
+	currentUrl      string
 }
 
 func (b *TheBot) clean() {
-        b.points = -1
-        b.userName = ""
-        b.token = ""
-        b.currentUrl = ""
+	b.points = -1
+	b.userName = ""
+	b.token = ""
+	b.currentUrl = ""
 }
 
 // InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(sessionFile, listFile string) (err error) {
-        // init bot class default fields
-        b.clean()
+func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
+	// init bot class default fields
+	b.clean()
 
-        b.baseUrl, err = url.Parse(baseUrl)
+	b.baseUrl, err = url.Parse(baseUrl)
 
-        var ccc interface{}
+	var ccc interface{}
 
-        // read cookies, create client
-        {
-                err = config.ReadConfig(configFileName, &ccc)
-                if err != nil {
-                        return err
-                }
+	// read cookies, create client
+	{
+		err = config.ReadConfig(cookieFile, &ccc)
+		if err != nil {
+			return err
+		}
 
-                var cookies []*http.Cookie
-                m := ccc.(map[string]interface{})
-                for k, v := range m {
-                        cookies = append(cookies, &http.Cookie{Name:k, Value:v.(string)})
-                }
+		var cookies []*http.Cookie
+		m := ccc.(map[string]interface{})
+		for k, v := range m {
+			cookies = append(cookies, &http.Cookie{Name: k, Value: v.(string)})
+		}
 
-                jar, err := cookiejar.New(&cookiejar.Options{})
-                if err != nil {
-                        return err
-                }
+		jar, err := cookiejar.New(&cookiejar.Options{})
+		if err != nil {
+			return err
+		}
 
-                jar.SetCookies(b.baseUrl, cookies)
-                b.client = &http.Client{
-                        Jar: jar,
-                }
-        }
+		jar.SetCookies(b.baseUrl, cookies)
+		b.client = &http.Client{
+			Jar: jar,
+		}
+	}
 
-        // read games lists
-        {
-                err = config.ReadConfig(listFile, &ccc)
-                if err != nil {
-                        return
-                }
+	b.gamesWhitelist = make(map[uint64]string)
 
-                b.gamesWhitelist = make(map[uint64]string)
-                m := ccc.(map[string]interface{})
-                for k, v := range m {
-                        q, err := strconv.ParseUint(k, 10, 32)
-                        if err != nil {
-                                return err
-                        }
-                        b.gamesWhitelist[q] = v.(string)
-                }
-                stdlog.Printf("successfully load games list [entries:%d]\n", len(b.gamesWhitelist))
-        }
+	// read steam profile, parse wishlist and followed games (also read mail-smtp settings)
+	{
+		err = config.ReadConfig(configFile, &b.botConfig)
+		if err != nil {
+			stdlog.Println(err)
+		}
 
-        return nil
+		if b.botConfig.SteamProfile != "" {
+			err = b.getSteamLists()
+			if err != nil {
+				stdlog.Println(err)
+			}
+		}
+	}
+
+	// read games lists
+	{
+		err = config.ReadConfig(listFile, &ccc)
+		if err != nil {
+			return
+		}
+
+		m := ccc.(map[string]interface{})
+		for k, v := range m {
+			q, err := strconv.ParseUint(k, 10, 32)
+			if err != nil {
+				return err
+			}
+			b.gamesWhitelist[q] = v.(string)
+		}
+	}
+	stdlog.Printf("successfully load games list [total entries:%d]\n", len(b.gamesWhitelist))
+
+	return nil
+}
+
+func (b *TheBot) getSteamLists() (err error) {
+	if b.botConfig.SteamProfile == "" {
+		return &BotError{time.Now(), "steam profile empty"}
+	}
+
+	_, doc, err := b.getPageCustom(baseSteamProfileUrl + b.botConfig.SteamProfile + steamWishlist)
+	if err != nil {
+		return
+	}
+
+	doc.Find("div[id^='game']").Each(func(_ int, s *goquery.Selection) {
+		id, _ := s.Attr("id")
+		id = strings.Split(id, "_")[1]
+		numId, _ := strconv.ParseUint(id, 10, 64)
+		name := s.Find("h4.ellipsis").Text()
+		b.gamesWhitelist[numId] = name
+	})
+
+	_, doc, err = b.getPageCustom(baseSteamProfileUrl + b.botConfig.SteamProfile + steamFollowed)
+	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
+		id, _ := s.Attr("data-appid")
+		numId, _ := strconv.ParseUint(id, 10, 64)
+		name := s.Find("div.gameListRowItemName > a").Text()
+		b.gamesWhitelist[numId] = name
+	})
+
+	stdlog.Println("steam profile parsed successfully")
+	return nil
 }
 
 func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
-        pageUrl, err := url.Parse(b.baseUrl.String() + path)
-        if err != nil {
-                return
-        }
+	pageUrl, err := url.Parse(b.baseUrl.String() + path)
+	if err != nil {
+		return
+	}
 
-        req, err := http.NewRequest("POST", pageUrl.String(), bytes.NewBufferString(params.Encode()))
-        if err != nil {
-                return
-        }
+	req, err := http.NewRequest("POST", pageUrl.String(), bytes.NewBufferString(params.Encode()))
+	if err != nil {
+		return
+	}
 
-        for _, h := range requestHeaders {
-                req.Header.Add(h.name, h.value)
-        }
+	for _, h := range requestHeaders {
+		req.Header.Add(h.name, h.value)
+	}
 
-        resp, err := b.client.Do(req)
-        if err != nil {
-                return
-        }
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return
+	}
 
-        defer resp.Body.Close()
+	defer resp.Body.Close()
 
-        answer, err := ioutil.ReadAll(resp.Body)
-        stdlog.Println("giveaway post request answer", string(answer))
-        if err != nil {
-                return
-        }
+	answer, err := ioutil.ReadAll(resp.Body)
+	stdlog.Println("giveaway post request answer", string(answer))
+	if err != nil {
+		return
+	}
 
-        r := PostResponse{}
-        err = json.Unmarshal(answer, &r)
+	r := PostResponse{}
+	err = json.Unmarshal(answer, &r)
 
-        stdlog.Println(r)
-
-        return r.Type == "success", err
+	return r.Type == "success", err
 }
 
-func (b *TheBot) getPageCustom(path string) (retPath string, retDoc *goquery.Document, err error) {
-        pageUrl, err := url.Parse(b.baseUrl.String() + path)
-        if err != nil {
-                return
-        }
+func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
+	pageUrl, err := url.Parse(uri)
+	if err != nil {
+		return
+	}
 
-        req, err := http.NewRequest("GET", pageUrl.String(), nil)
-        if err != nil {
-                return
-        }
+	req, err := http.NewRequest("GET", pageUrl.String(), nil)
+	if err != nil {
+		return
+	}
 
-        for _, h := range requestHeaders {
-                req.Header.Add(h.name, h.value)
-        }
+	for _, h := range requestHeaders {
+		req.Header.Add(h.name, h.value)
+	}
 
-        resp, err := b.client.Do(req)
-        if err != nil {
-                return
-        }
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return
+	}
 
-        defer resp.Body.Close()
+	defer resp.Body.Close()
 
-        retPath = b.baseUrl.String() + path
-        retDoc, err = goquery.NewDocumentFromReader(resp.Body)
+	retPath = pageUrl.String()
+	retDoc, err = goquery.NewDocumentFromReader(resp.Body)
 
-        return
+	return
 }
 
 func (b *TheBot) getPage(path string) (err error) {
-        if b.currentUrl == b.baseUrl.String() + path {
-                return nil
-        }
+	if b.currentUrl == b.baseUrl.String()+path {
+		return nil
+	}
 
-        b.currentUrl, b.currentDocument, err = b.getPageCustom(path)
+	b.currentUrl, b.currentDocument, err = b.getPageCustom(b.baseUrl.String() + path)
 
-        return err
+	return err
 }
 
 func (b *TheBot) getUserInfo() (err error) {
-        err = b.getPage("/")
-        if err != nil {
-                return
-        }
+	err = b.getPage("/")
+	if err != nil {
+		return
+	}
 
-        b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-        b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
-        b.token, _ = b.currentDocument.Find("input[name='xsrf_token']").First().Attr("value")
+	b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
+	b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+	b.token, _ = b.currentDocument.Find("input[name='xsrf_token']").First().Attr("value")
 
-        if b.userName == "" || b.points < 0 || b.token == "" {
-                return &BotError{time.Now(), "no user information"}
-        }
+	if b.userName == "" || b.points < 0 || b.token == "" {
+		return &BotError{time.Now(), "no user information"}
+	}
 
-        stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, b.points, b.token)
+	stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, b.points, b.token)
 
-        return nil
+	return nil
 }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-        _, doc, err := b.getPageCustom(path)
-        if err != nil {
-                return
-        }
+	_, doc, err := b.getPageCustom(b.baseUrl.String() + path)
+	if err != nil {
+		return
+	}
 
-        sel := doc.Find("div[data-do='entry_insert']")
-        // no buttons
-        if sel.Size() == 0 {
-                return false, nil
-        }
+	sel := doc.Find("div[data-do='entry_insert']")
+	// no buttons
+	if sel.Size() == 0 {
+		return false, nil
+	}
 
-        result := true
-        sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
-                class, _ := s.Attr("class")
-                if class == "" || strings.Contains(class, "is-hidden") {
-                        result = false
-                        return false
-                }
-                return true
-        })
+	result := true
+	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
+		class, _ := s.Attr("class")
+		if class == "" || strings.Contains(class, "is-hidden") {
+			result = false
+			return false
+		}
+		return true
+	})
 
-        return result, nil
+	return result, nil
 }
 
 func (b *TheBot) enterGiveaway(g GiveAway) (status bool, err error) {
-        params :=  url.Values{}
-        params.Add("xsrf_token", b.token)
-        params.Add("code", g.SGID)
-        params.Add("do", "entry_insert")
+	params := url.Values{}
+	params.Add("xsrf_token", b.token)
+	params.Add("code", g.SGID)
+	params.Add("do", "entry_insert")
 
-        return b.postRequest("/ajax.php", params)
+	return b.postRequest("/ajax.php", params)
 }
 
 func (b *TheBot) parseGiveaways() (err error) {
-        err = b.getPage("/")
-        if err != nil {
-                return
-        }
+	err = b.getPage("/")
+	if err != nil {
+		return
+	}
 
-        // sorted by time whitelisted giveaways
-        giveaways := make(map[time.Time]GiveAway)
-        // check for duplicates by SteamGifts giveaway id
-        checkedg := make(map[string]bool)
-        b.currentDocument.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
-                sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
-                sgCode = strings.Split(sgCode, "/")[2]
+	// sorted by time whitelisted giveaways
+	giveaways := make(map[time.Time]GiveAway)
+	// check for duplicates by SteamGifts giveaway id
+	checkedg := make(map[string]bool)
+	b.currentDocument.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
+		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
+		sgCode = strings.Split(sgCode, "/")[2]
 
-                _, ok = checkedg[sgCode]
-                if ok {
-                        return
-                }
-                x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
-                if !ok {
-                        return
-                }
+		_, ok = checkedg[sgCode]
+		if ok {
+			return
+		}
+		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
+		if !ok {
+			return
+		}
 
-                // TODO there is app/NUM and sub/NUM need to work with it somehow
-                if strings.Contains(x, "/sub/") {
-//                      stdlog.Println("skip sub giveaway", x)
-                        return
-                }
+		// TODO there is app/NUM and sub/NUM need to work with it somehow
+		if strings.Contains(x, "/sub/") {
+			// stdlog.Println("skip sub giveaway", x)
+			return
+		}
 
-                // get steam game id and check it whitelisted
-                gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
-                game, ok := b.gamesWhitelist[gid]
-                if !ok {
-//                      stdlog.Println("skip giveaway", gid)
-                        return
-                }
+		// get steam game id and check it whitelisted
+		gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
+		game, ok := b.gamesWhitelist[gid]
+		if !ok {
+			// stdlog.Println("skip giveaway", gid)
+			return
+		}
 
-                // get steamgifts giveaway code (unique url)
-                sgUrl, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
-                if !ok {
-                        stdlog.Println("skip giveaway - can't find url", gid)
-                        return
-                }
+		// get steamgifts giveaway code (unique url)
+		sgUrl, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
+		if !ok {
+			stdlog.Println("skip giveaway - can't find url", gid)
+			return
+		}
 
-                status, err := b.getGiveawayStatus(sgUrl)
-                if err != nil {
-                        errlog.Println(err)
-                        return
-                }
+		status, err := b.getGiveawayStatus(sgUrl)
+		if err != nil {
+			errlog.Println(err)
+			return
+		}
 
-                if !status {
-                        stdlog.Println("already entered for", gid)
-                        return
-                }
+		if !status {
+			stdlog.Println("already entered for", gid, game)
+			return
+		}
 
-                // get giveaway timestamp
-                y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
-                if !ok {
-                        stdlog.Println("can't parse timestamp for", gid)
-                        return
-                }
+		// get giveaway timestamp
+		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
+		/* if !ok {
+			stdlog.Println("can't parse timestamp for", gid)
+			return
+		} */
 
-                t, _ := strconv.ParseInt(y, 10, 64)
+		t, _ := strconv.ParseInt(y, 10, 64)
 
-                // add nanoseconds to split giveaways which will be ended at one time
-                giveaways[time.Unix(t, int64(time.Now().Nanosecond()))] = GiveAway{sgCode, gid, sgUrl, game}
-                checkedg[sgCode] = true
-//              stdlog.Println("found giveaway for", gid, game, time.Unix(t, int64(time.Now().Nanosecond())))
-        })
+		// add nanoseconds to split giveaways which will be ended at one time
+		giveaways[time.Unix(t, int64(time.Now().Nanosecond()))] = GiveAway{sgCode, gid, sgUrl, game}
+		checkedg[sgCode] = true
+	})
 
-        stdlog.Println(giveaways)
-        for _, g := range giveaways {
-                status, err := b.enterGiveaway(g)
-                if err != nil {
-                        stdlog.Println("can't enter for", g, err)
-                        continue
-                }
-                if !status {
-                        break
-                }
-                stdlog.Println("enter for giveaway", g)
-        }
+	stdlog.Println("found giveaways", len(giveaways))
+	for _, g := range giveaways {
+		// add some human behavior - pause bot for a few seconds (3-10)
+		time.Sleep(time.Second * time.Duration(rand.Intn(7)+3))
 
-        return nil
+		status, err := b.enterGiveaway(g)
+		if err != nil {
+			stdlog.Println("can't enter for", g, err)
+			continue
+		}
+		if !status {
+			break
+		}
+		stdlog.Println("enter for giveaway", g)
+	}
+
+	return nil
 }
 
 // Check - check page and enter for gifts (repeat by timeout)
 func (b *TheBot) Check() (err error) {
-        stdlog.Println("bot checking...")
-        
-        defer b.clean()
+	stdlog.Println("bot checking...")
 
-        err = b.getUserInfo()
-        if err != nil {
-                return
-        }
+	defer b.clean()
 
-        // parse main page
-        err = b.parseGiveaways()
-        if err != nil {
-                return
-        }
+	err = b.getUserInfo()
+	if err != nil {
+		return
+	}
 
-        stdlog.Println("bot check finished")
-        return nil
+	// parse main page
+	err = b.parseGiveaways()
+	if err != nil {
+		return
+	}
+
+	stdlog.Println("bot check finished")
+	return nil
 }
