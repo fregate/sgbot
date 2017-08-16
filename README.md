@@ -10,13 +10,13 @@ This is python implementation which inspired me to do this
 https://github.com/theWaR13/SteamGiveawayManager
 
 Next things to do
-* Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games)
+* Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games) +
 * Use gzip parser to work with gzip http answers
-* Add some timeouts (as python impl - I think more "human"-behaviour)
+* Add some timeouts (as python impl - I think more "human"-behavior) +
 * Test for proper daemon work
 * Add some AI(?) - priority maps. Enter for wishlisted rather than followed
 * Add some notifications to user through email (win gift, need to refresh cookies)
-* Reload lists (or parse account) on the fly (do not need to restart daemon)
+* Reload lists (or parse account) on the fly (without daemon restart)
 
 External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
