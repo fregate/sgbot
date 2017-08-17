@@ -187,22 +187,20 @@ func (b *TheBot) readGameLists(listFile string) (err error) {
 	var ccc interface{}
 
 	err = config.ReadConfig(listFile, &ccc)
-	if err != nil {
-		return
-	}
-
-	m := ccc.(map[string]interface{})
-	for k, v := range m {
-		q, err := strconv.ParseUint(k, 10, 32)
-		if err != nil {
-			return err
+	if err == nil {
+		m := ccc.(map[string]interface{})
+		for k, v := range m {
+			q, err := strconv.ParseUint(k, 10, 32)
+			if err != nil {
+				break
+			}
+			b.gamesWhitelist[q] = v.(string)
 		}
-		b.gamesWhitelist[q] = v.(string)
-	}
 
-	if len(b.gamesWhitelist) == 0 {
-		stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
-		return &BotError{time.Now(), "no games to win"}
+		if len(b.gamesWhitelist) == 0 {
+			stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
+			return &BotError{time.Now(), "no games to win"}
+		}
 	}
 
 	stdlog.Printf("successfully load games list [total entries:%d]\n", len(b.gamesWhitelist))
