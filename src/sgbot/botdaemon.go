@@ -159,12 +159,8 @@ func startBot(srv *Service) {
 			srv.bot.SendPanicMsg(fmt.Sprintf("error during check. stop service. %v", err))
 			break
 		}
-		if count == 0 {
-			count = 1
-		} else {
-			count = 2
-		}
-		time.Sleep(time.Hour * time.Duration(count))
+		stdlog.Println("wait for", (count + 1) * 60, "mins")
+		time.Sleep(time.Hour * time.Duration(count + 1))
 	}
 }
 
