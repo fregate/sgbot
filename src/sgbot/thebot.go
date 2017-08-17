@@ -354,11 +354,21 @@ func (b *TheBot) getUserInfo() (err error) {
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 	_, doc, err := b.getPageCustom(b.baseUrl.String() + path)
 	if err != nil {
-		return
+		return true, err
 	}
 
-	sel := doc.Find("div[data-do='entry_insert']")
-	// no buttons
+	sel := doc.Find("div.sidebar--wide").First()
+	if sel.Size() == 0 {
+		return true, &BotError{time.Now(), "strange page " + path}
+	}
+
+	sel = doc.Find("div.sidebar__error")
+	if sel.Size() != 0 {
+		return false, &BotError{time.Now(), "not enough points"}
+	}
+
+	sel = doc.Find("div[data-do='entry_insert']")
+	// no buttons - exist or not enough points
 	if sel.Size() == 0 {
 		return false, nil
 	}
@@ -395,23 +405,23 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 	giveaways := make(map[time.Time]GiveAway)
 	// check for duplicates by SteamGifts giveaway id
 	checkedg := make(map[string]bool)
-	b.currentDocument.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
+	b.currentDocument.Find("div.giveaway__row-outer-wrap").EachWithBreak(func(idx int, s *goquery.Selection) bool {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
 		_, ok = checkedg[sgCode]
 		if ok {
-			return
+			return true
 		}
 		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
 		if !ok {
-			return
+			return true
 		}
 
 		// TODO there is app/NUM and sub/NUM need to work with it somehow
 		if strings.Contains(x, "/sub/") {
 			// stdlog.Println("skip sub giveaway", x)
-			return
+			return true
 		}
 
 		// get steam game id and check it whitelisted
@@ -419,32 +429,32 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		game, ok := b.gamesWhitelist[gid]
 		if !ok {
 			// stdlog.Println("skip giveaway", gid)
-			return
+			return true
 		}
 
 		// get steamgifts giveaway code (unique url)
 		sgUrl, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		if !ok {
 			errlog.Println("skip giveaway - can't find url", gid)
-			return
+			return true
 		}
 
 		status, err := b.getGiveawayStatus(sgUrl)
 		if err != nil {
-			errlog.Println(err)
-			return
+			stdlog.Println(err)
+			return status
 		}
 
 		if !status {
-			// stdlog.Println("already entered for", gid, game)
-			return
+			//stdlog.Println("not enough points", gid, game)
+			return false
 		}
 
 		// get giveaway timestamp
 		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
 		if !ok {
 			errlog.Println("can't parse timestamp for", gid)
-			return
+			return true
 		}
 
 		t, _ := strconv.ParseInt(y, 10, 64)
@@ -452,6 +462,9 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		// add nanoseconds to split giveaways which will be ended at one time
 		giveaways[time.Unix(t, int64(time.Now().Nanosecond()))] = GiveAway{sgCode, gid, sgUrl, game}
 		checkedg[sgCode] = true
+
+		// do not parse giveaways which will draw in more than hour
+		return time.Unix(t, 0).Sub(time.Now()) < time.Hour
 	})
 
 	stdlog.Println("found giveaways", len(giveaways))
