@@ -16,12 +16,22 @@ Next things to do
 * ~~Test for proper daemon work in linux~~ 
 * Add some AI(?) - priority maps. Enter for wishlisted rather than followed
 * Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)
-* Reload lists (or parse account) on the fly (without daemon restart)
+* ~~Reload lists (or parse account) on the fly (without daemon restart)~~ *Reload list before every check*
 
 # Preparations
-1. If you want to parse your steam profile - set it in config.json "profile". You need only name, not whole URL. Or leave it empty (remove).
-2. Fill gameslist.json with games. "SteamID":"Name", Name - optional: used only for logs (leave it empty "" or remove)
-3. Fill cookies.json. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value"
+1. **config.json** - bot config. Optional
+ + profile - If you want to parse your steam profile. You need only name, not whole URL. Optional.
+ + mail - set smtp settings for sends some notifications (optional)
+   * smtp - smtp server
+   * port - smtp server port
+   * username - smtp authorization username (mail will be sent from this email)
+   * password - smtp auth password (*not tested without auth*)
+ + digest - send daily digest for the previous day (or in panic message - current digest)
+ + subjecttag - tag in mail subject (i.e. [SG_BOT])
+ + recipient - mail will be send to this email
+ + *if there is no "recipient" or "mail" not fiiled properly - no mail at all*
+2. **gameslist.json** - Optional. fill it with games. "SteamID":"Name", *Name - optional: used only for logs (you can leave it empty "")* If no games loaded (profile + list) - bot stop
+3. **cookies.json** Required. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value"
 4. To run as daemon (tested only for linux)
   * sudo ./bot install
   * Set service working dir for ./bot path (/etc/systemd/system/sgbotservice.service -> [Service] -> WorkingDirectory=/path/to/executable
@@ -29,7 +39,7 @@ Next things to do
   * sudo service sgbotservice start
   * sudo service sgbotservice status
   * profit!
-
+  
 # External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
 * https://github.com/takama/daemon - golang daemon
