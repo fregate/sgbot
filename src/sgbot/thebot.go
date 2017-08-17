@@ -510,15 +510,12 @@ func (b *TheBot) sendDigest() {
 		return
 	}
 
-	if time.Now().Hour() != 0 {
-		return
+	if time.Now().Hour() == 0 || time.Now().Sub(b.lastTimeDigestSent) > time.Hour*24 {
+		stdlog.Println("sending digest")
+		b.sendMail("Daily digest", b.joinDigest())
+		b.lastTimeDigestSent = time.Now()
+		b.digestMsgs = make([]string, 0)
 	}
-
-	stdlog.Println("sending digest")
-
-	b.sendMail("Daily digest", b.joinDigest())
-	//	b.lastTimeDigestSent = time.Now()
-	b.digestMsgs = make([]string, 0)
 }
 
 // Check - check page and enter for gifts (repeat by timeout)
