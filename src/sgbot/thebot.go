@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,40 @@ const (
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
 )
+
+// By is the type of a "less" function that defines the ordering of its Time arguments.
+// time sorter function
+type By func(p1, p2 *time.Time) bool
+
+// Sort is a method on the function type, By, that sorts the argument slice according to the function.
+func (by By) Sort(entries []time.Time) {
+	ps := &timeSorter{
+		entries: entries,
+		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
+	}
+	sort.Sort(ps)
+}
+
+// timeSorter joins a By function and a slice of Time to be sorted.
+type timeSorter struct {
+	entries []time.Time
+	by      func(p1, p2 *time.Time) bool // Closure used in the Less method.
+}
+
+// Len is part of sort.Interface.
+func (s *timeSorter) Len() int {
+	return len(s.entries)
+}
+
+// Swap is part of sort.Interface.
+func (s *timeSorter) Swap(i, j int) {
+	s.entries[i], s.entries[j] = s.entries[j], s.entries[i]
+}
+
+// Less is part of sort.Interface. It is implemented by calling the "by" closure in the sorter.
+func (s *timeSorter) Less(i, j int) bool {
+	return s.by(&s.entries[i], &s.entries[j])
+}
 
 // TheBot - class for work with SteamGifts pages
 type TheBot struct {
@@ -439,17 +474,6 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 			return true
 		}
 
-		status, err := b.getGiveawayStatus(sgUrl)
-		if err != nil {
-			stdlog.Println(err)
-			return status
-		}
-
-		if !status {
-			//stdlog.Println("not enough points", gid, game)
-			return false
-		}
-
 		// get giveaway timestamp
 		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
 		if !ok {
@@ -468,26 +492,52 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 	})
 
 	stdlog.Println("found giveaways", len(giveaways))
-	count = len(giveaways)
-	for t, g := range giveaways {
+
+	// sort giveaways by time asc
+	var keys []time.Time
+	for k := range giveaways {
+		keys = append(keys, k)
+	}
+	sec := func(t1, t2 *time.Time) bool {
+		return t1.UnixNano() < t2.UnixNano()
+	}
+	By(sec).Sort(keys)
+
+	count = 0
+	for _, t := range keys {
+		g := giveaways[t]
 		// add some human behaviour - pause bot for a few seconds (3-6)
 		d := time.Second * time.Duration(rand.Intn(3)+3)
 		if t.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
-		status, err := b.enterGiveaway(g)
+		status, err := b.getGiveawayStatus(g.Url)
+		if err != nil {
+			stdlog.Println(err)
+			if !status {
+				// not enough points
+				count = count + 1
+				break
+			}
+		}
+
+		if !status {
+			continue
+		}
+
+		status, err = b.enterGiveaway(g)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, g)
 			continue
 		}
 		if !status {
 			stdlog.Printf("external error when enter for [%+v]. wait\n", g)
+			count = count + 1
 			break
 		}
 		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, t.Sub(time.Now()).String())
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, t.Format("2006-01-02 15:04:05"), g.Url))
-		count = count - 1
 	}
 
 	return count, nil
