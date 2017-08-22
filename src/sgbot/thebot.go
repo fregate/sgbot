@@ -82,11 +82,6 @@ var requestHeaders = []pair{
 }
 
 const (
-	Success string = "green"
-	Warning string = "yellow"
-	Error   string = "red"
-	Info    string = "magenta"
-
 	baseUrl             string = "https://www.steamgifts.com"
 	baseSteamProfileUrl string = "http://steamcommunity.com/id/"
 	steamWishlist       string = "/wishlist/"
