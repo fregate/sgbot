@@ -35,6 +35,41 @@ type GiveAway struct {
 	GID  uint64
 	Url  string
 	Name string
+	Time time.Time
+}
+
+// By is the type of a "less" function that defines the ordering of its Time arguments.
+// time sorter function
+type By func(p1, p2 *GiveAway) bool
+
+// Sort is a method on the function type, By, that sorts the argument slice according to the function.
+func (by By) Sort(entries []GiveAway) {
+	ps := &timeSorter{
+		entries: entries,
+		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
+	}
+	sort.Sort(ps)
+}
+
+// timeSorter joins a By function and a slice of Time to be sorted.
+type timeSorter struct {
+	entries []GiveAway
+	by      func(p1, p2 *GiveAway) bool // Closure used in the Less method.
+}
+
+// Len is part of sort.Interface.
+func (s *timeSorter) Len() int {
+	return len(s.entries)
+}
+
+// Swap is part of sort.Interface.
+func (s *timeSorter) Swap(i, j int) {
+	s.entries[i], s.entries[j] = s.entries[j], s.entries[i]
+}
+
+// Less is part of sort.Interface. It is implemented by calling the "by" closure in the sorter.
+func (s *timeSorter) Less(i, j int) bool {
+	return s.by(&s.entries[i], &s.entries[j])
 }
 
 type mailinfo struct {
@@ -88,40 +123,6 @@ const (
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
 )
-
-// By is the type of a "less" function that defines the ordering of its Time arguments.
-// time sorter function
-type By func(p1, p2 *time.Time) bool
-
-// Sort is a method on the function type, By, that sorts the argument slice according to the function.
-func (by By) Sort(entries []time.Time) {
-	ps := &timeSorter{
-		entries: entries,
-		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
-	}
-	sort.Sort(ps)
-}
-
-// timeSorter joins a By function and a slice of Time to be sorted.
-type timeSorter struct {
-	entries []time.Time
-	by      func(p1, p2 *time.Time) bool // Closure used in the Less method.
-}
-
-// Len is part of sort.Interface.
-func (s *timeSorter) Len() int {
-	return len(s.entries)
-}
-
-// Swap is part of sort.Interface.
-func (s *timeSorter) Swap(i, j int) {
-	s.entries[i], s.entries[j] = s.entries[j], s.entries[i]
-}
-
-// Less is part of sort.Interface. It is implemented by calling the "by" closure in the sorter.
-func (s *timeSorter) Less(i, j int) bool {
-	return s.by(&s.entries[i], &s.entries[j])
-}
 
 // TheBot - class for work with SteamGifts pages
 type TheBot struct {
@@ -427,74 +428,70 @@ func (b *TheBot) enterGiveaway(g GiveAway) (status bool, pts string, err error) 
 	return b.postRequest("/ajax.php", params)
 }
 
-func (b *TheBot) getGiveaways(doc *goquery.Document, period time.Duration) (giveaways map[time.Time]GiveAway) {
-	giveaways = make(map[time.Time]GiveAway)
-	doc.Find("div.giveaway__row-outer-wrap").EachWithBreak(func(idx int, s *goquery.Selection) bool {
+func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
+	doc.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
+		// stdlog.Println(sgCode)
+
 		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
 		if !ok {
-			return true
+			//stdlog.Println("no link?", sgCode)
+			return
 		}
 
 		// TODO there is app/NUM and sub/NUM need to work with it somehow
 		if strings.Contains(x, "/sub/") {
 			// stdlog.Println("skip sub giveaway", x)
-			return true
+			return
 		}
 
 		// get steam game id and check it whitelisted
 		gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
 		game, ok := b.gamesWhitelist[gid]
 		if !ok {
-			// stdlog.Println("skip giveaway", gid)
-			return true
+			// stdlog.Println("skip giveaway by whitelist", gid)
+			return
 		}
 
 		// get steamgifts giveaway code (unique url)
 		sgUrl, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		if !ok {
 			errlog.Println("skip giveaway - can't find url", gid)
-			return true
+			return
 		}
 
 		// get giveaway timestamp
 		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
 		if !ok {
 			errlog.Println("can't parse timestamp for", gid)
-			return true
+			return
 		}
 
 		t, _ := strconv.ParseInt(y, 10, 64)
 
 		// add nanoseconds to split giveaways which will be ended at one time
-		giveaways[time.Unix(t, int64(time.Now().Nanosecond()))] = GiveAway{sgCode, gid, sgUrl, game}
-
-		// do not parse giveaways which will draw in more than preiod
-		return time.Unix(t, 0).Sub(time.Now()) < period
+		giveaways = append(giveaways, GiveAway{sgCode, gid, sgUrl, game, time.Unix(t, 0)})
 	})
 
+	// stdlog.Println(giveaways)
 	return giveaways
 }
 
-func (b *TheBot) processGiveaways(giveaways map[time.Time]GiveAway) (count int) {
+func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (count int) {
 	// sort giveaways by time asc
-	var keys []time.Time
-	for k := range giveaways {
-		keys = append(keys, k)
+	sec := func(t1, t2 *GiveAway) bool {
+		return t1.Time.UnixNano() < t2.Time.UnixNano()
 	}
-	sec := func(t1, t2 *time.Time) bool {
-		return t1.UnixNano() < t2.UnixNano()
-	}
-	By(sec).Sort(keys)
+	By(sec).Sort(giveaways)
 
 	strpts := ""
-	for _, t := range keys {
-		g := giveaways[t]
+	for _, g := range giveaways {
+//		g := giveaways[t]
 		// add some human behaviour - pause bot for a few seconds (3-6)
 		d := time.Second * time.Duration(rand.Intn(3)+3)
-		if t.After(time.Now().Add(d)) {
+		if g.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
@@ -523,8 +520,12 @@ func (b *TheBot) processGiveaways(giveaways map[time.Time]GiveAway) (count int) 
 			break
 		}
 		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, t.Sub(time.Now()).String())
-		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, t.Format("2006-01-02 15:04:05"), g.Url))
+		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, g.Time.Format("2006-01-02 15:04:05"), g.Url))
 		b.points, _ = strconv.Atoi(strpts)
+
+		if g.Time.Sub(time.Now()) < period {
+			break
+		}
 	}
 
 	return count
@@ -536,9 +537,9 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		return
 	}
 
-	giveaways := b.getGiveaways(b.currentDocument, time.Hour)
-	stdlog.Println("found giveaways", len(giveaways))
-	count = b.processGiveaways(giveaways)
+	giveaways := b.getGiveaways(b.currentDocument)
+	// stdlog.Println("found giveaways", len(giveaways))
+	count = b.processGiveaways(giveaways, time.Hour)
 
 	if count == 0 && b.points > 0 {
 		// enter for wishlist giveaways if any points left
@@ -546,8 +547,8 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		if err != nil {
 			return 0, err
 		}
-		giveaways = b.getGiveaways(doc, time.Hour * 24 * 7 * 5) // 5 weeks - all
-		b.processGiveaways(giveaways)
+		giveaways = b.getGiveaways(doc)
+		b.processGiveaways(giveaways, time.Hour * 24 * 7 * 5) // 5 weeks - all
 	}
 
 	return count, nil
