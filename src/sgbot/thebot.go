@@ -83,6 +83,7 @@ var requestHeaders = []pair{
 
 const (
 	baseUrl             string = "https://www.steamgifts.com"
+	sgWishlistUrl		string = "/giveaways/search?type=wishlist"
 	baseSteamProfileUrl string = "http://steamcommunity.com/id/"
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
@@ -126,6 +127,7 @@ func (s *timeSorter) Less(i, j int) bool {
 type TheBot struct {
 	userName string
 	token    string
+	points   int
 	baseUrl  *url.URL
 	client   *http.Client
 
@@ -290,7 +292,7 @@ func (b *TheBot) getSteamLists() (err error) {
 	return nil
 }
 
-func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
+func (b *TheBot) postRequest(path string, params url.Values) (status bool, pts string, err error) {
 	pageUrl, err := url.Parse(b.baseUrl.String() + path)
 	if err != nil {
 		return
@@ -321,7 +323,7 @@ func (b *TheBot) postRequest(path string, params url.Values) (status bool, err e
 	r := PostResponse{}
 	err = json.Unmarshal(answer, &r)
 
-	return r.Type == "success", err
+	return r.Type == "success", r.Points, err
 }
 
 func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
@@ -370,13 +372,13 @@ func (b *TheBot) getUserInfo() (err error) {
 
 	b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
 	b.token, _ = b.currentDocument.Find("input[name='xsrf_token']").First().Attr("value")
-	points, _ := strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+	b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
 
 	if b.userName == "" || b.token == "" {
 		return &BotError{time.Now(), "no user information"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, points, b.token)
+	stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, b.points, b.token)
 
 	return nil
 }
@@ -416,7 +418,7 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 	return result, nil
 }
 
-func (b *TheBot) enterGiveaway(g GiveAway) (status bool, err error) {
+func (b *TheBot) enterGiveaway(g GiveAway) (status bool, pts string, err error) {
 	params := url.Values{}
 	params.Add("xsrf_token", b.token)
 	params.Add("code", g.SGID)
@@ -425,24 +427,12 @@ func (b *TheBot) enterGiveaway(g GiveAway) (status bool, err error) {
 	return b.postRequest("/ajax.php", params)
 }
 
-func (b *TheBot) parseGiveaways() (count int, err error) {
-	err = b.getPage("/")
-	if err != nil {
-		return
-	}
-
-	// sorted by time whitelisted giveaways
-	giveaways := make(map[time.Time]GiveAway)
-	// check for duplicates by SteamGifts giveaway id
-	checkedg := make(map[string]bool)
-	b.currentDocument.Find("div.giveaway__row-outer-wrap").EachWithBreak(func(idx int, s *goquery.Selection) bool {
+func (b *TheBot) getGiveaways(doc *goquery.Document, period time.Duration) (giveaways map[time.Time]GiveAway) {
+	giveaways = make(map[time.Time]GiveAway)
+	doc.Find("div.giveaway__row-outer-wrap").EachWithBreak(func(idx int, s *goquery.Selection) bool {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
-		_, ok = checkedg[sgCode]
-		if ok {
-			return true
-		}
 		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
 		if !ok {
 			return true
@@ -480,14 +470,15 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 
 		// add nanoseconds to split giveaways which will be ended at one time
 		giveaways[time.Unix(t, int64(time.Now().Nanosecond()))] = GiveAway{sgCode, gid, sgUrl, game}
-		checkedg[sgCode] = true
 
-		// do not parse giveaways which will draw in more than hour
-		return time.Unix(t, 0).Sub(time.Now()) < time.Hour
+		// do not parse giveaways which will draw in more than preiod
+		return time.Unix(t, 0).Sub(time.Now()) < period
 	})
 
-	stdlog.Println("found giveaways", len(giveaways))
+	return giveaways
+}
 
+func (b *TheBot) processGiveaways(giveaways map[time.Time]GiveAway) (count int) {
 	// sort giveaways by time asc
 	var keys []time.Time
 	for k := range giveaways {
@@ -498,7 +489,7 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 	}
 	By(sec).Sort(keys)
 
-	count = 0
+	strpts := ""
 	for _, t := range keys {
 		g := giveaways[t]
 		// add some human behaviour - pause bot for a few seconds (3-6)
@@ -521,7 +512,7 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 			continue
 		}
 
-		status, err = b.enterGiveaway(g)
+		status, strpts, err = b.enterGiveaway(g)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, g)
 			continue
@@ -533,6 +524,30 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		}
 		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, t.Sub(time.Now()).String())
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, t.Format("2006-01-02 15:04:05"), g.Url))
+		b.points, _ = strconv.Atoi(strpts)
+	}
+
+	return count
+}
+
+func (b *TheBot) parseGiveaways() (count int, err error) {
+	err = b.getPage("/")
+	if err != nil {
+		return
+	}
+
+	giveaways := b.getGiveaways(b.currentDocument, time.Hour)
+	stdlog.Println("found giveaways", len(giveaways))
+	count = b.processGiveaways(giveaways)
+
+	if count == 0 && b.points > 0 {
+		// enter for wishlist giveaways if any points left
+		_, doc, err := b.getPageCustom(b.baseUrl.String() + sgWishlistUrl)
+		if err != nil {
+			return 0, err
+		}
+		giveaways = b.getGiveaways(doc, time.Hour * 24 * 7 * 5) // 5 weeks - all
+		b.processGiveaways(giveaways)
 	}
 
 	return count, nil
