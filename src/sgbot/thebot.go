@@ -488,11 +488,8 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 
 	strpts := ""
 	for _, g := range giveaways {
-//		g := giveaways[t]
-		// add some human behaviour - pause bot for a few seconds (3-6)
-		d := time.Second * time.Duration(rand.Intn(3)+3)
-		if g.Time.After(time.Now().Add(d)) {
-			time.Sleep(d)
+		if g.Time.Sub(time.Now()) < period {
+			break
 		}
 
 		status, err := b.getGiveawayStatus(g.Url)
@@ -509,6 +506,12 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			continue
 		}
 
+		// add some human behaviour - pause bot for a few seconds (3-6)
+		d := time.Second * time.Duration(rand.Intn(3)+3)
+		if g.Time.After(time.Now().Add(d)) {
+			time.Sleep(d)
+		}
+
 		status, strpts, err = b.enterGiveaway(g)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, g)
@@ -522,10 +525,6 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, t.Sub(time.Now()).String())
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, g.Time.Format("2006-01-02 15:04:05"), g.Url))
 		b.points, _ = strconv.Atoi(strpts)
-
-		if g.Time.Sub(time.Now()) < period {
-			break
-		}
 	}
 
 	return count
