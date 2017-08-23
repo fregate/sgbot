@@ -488,7 +488,8 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 
 	strpts := ""
 	for _, g := range giveaways {
-		if g.Time.Sub(time.Now()) < period {
+		if g.Time.After(time.Now().Add(period)) {
+			stdlog.Println("enough parsing", g)
 			break
 		}
 
@@ -522,7 +523,7 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			count = count + 1
 			break
 		}
-		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, t.Sub(time.Now()).String())
+		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, g.Time.Sub(time.Now()).String())
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, g.Time.Format("2006-01-02 15:04:05"), g.Url))
 		b.points, _ = strconv.Atoi(strpts)
 	}
@@ -536,12 +537,13 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		return
 	}
 
+	stdlog.Println("check main page")
 	giveaways := b.getGiveaways(b.currentDocument)
-	// stdlog.Println("found giveaways", len(giveaways))
 	count = b.processGiveaways(giveaways, time.Hour)
 
 	if count == 0 && b.points > 0 {
 		// enter for wishlist giveaways if any points left
+		stdlog.Println("check wishlist")
 		_, doc, err := b.getPageCustom(b.baseUrl.String() + sgWishlistUrl)
 		if err != nil {
 			return 0, err
