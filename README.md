@@ -14,7 +14,7 @@ Next things to do
 * Use gzip parser to work with gzip http answers
 * ~~Add some timeouts (as python impl - I think more "human"-behavior)~~
 * ~~Test for proper daemon work in linux~~ 
-* Add some AI(?) - priority maps. Enter for wishlisted rather than followed
+* ~~Add some AI(?) - priority maps. Enter for wishlisted rather than followed~~ If some points left - try to apply for wishlisted GAs
 * Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)
 * ~~Reload lists (or parse account) on the fly (without daemon restart)~~ *Reload list before every check*
 
