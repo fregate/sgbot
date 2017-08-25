@@ -119,6 +119,7 @@ var requestHeaders = []pair{
 const (
 	baseUrl             string = "https://www.steamgifts.com"
 	sgWishlistUrl		string = "/giveaways/search?type=wishlist"
+	sgAccountInfo		string = "/giveaways/won"
 	baseSteamProfileUrl string = "http://steamcommunity.com/id/"
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
@@ -139,6 +140,7 @@ type TheBot struct {
 	cookiesFileName   string
 
 	gamesWhitelist map[uint64]string
+	gamesWon []uint64
 
 	// page cache
 	currentDocument *goquery.Document
@@ -366,7 +368,7 @@ func (b *TheBot) getPage(path string) (err error) {
 }
 
 func (b *TheBot) getUserInfo() (err error) {
-	err = b.getPage("/")
+	err = b.getPage(sgAccountInfo)
 	if err != nil {
 		return
 	}
@@ -379,9 +381,47 @@ func (b *TheBot) getUserInfo() (err error) {
 		return &BotError{time.Now(), "no user information"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d][token:%s]\n", b.userName, b.points, b.token)
+	stdlog.Printf("receive info [user:%s][pts:%d]\n", b.userName, b.points)
+
+	b.gamesWon = make([]uint64, 0)
+	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
+		b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
+			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 {
+				// steam id
+				steamid, _ := s.Find("a.table_image_thumbnail").First().Attr("style")
+				// background-image:url(https://steamcdn-a.akamaihd.net/steam/apps/265930/capsule_184x69.jpg); - [5]
+				n, _ := strconv.ParseUint(strings.Split(steamid, "/")[5], 10, 64)
+
+				b.gamesWon = append(b.gamesWon, n)
+
+				// 
+				//sinfo := s.Find("a.table__column__heading").First()
+				//u, _ := sinfo.Attr("href")
+				//t := sinfo.Text()
+				//stdlog.Println(n, t, u)
+			}
+		})
+	}
+
+	if len(b.gamesWon) > 0 {
+		stdlog.Println("you've won", b.gamesWon)
+	}
 
 	return nil
+}
+
+func (b *TheBot) checkWonList(gid uint64) bool {
+	if len(b.gamesWon) == 0 {
+		return false
+	}
+
+    for _, v := range b.gamesWon {
+        if v == gid {
+            return true
+        }
+    }
+
+    return false
 }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
@@ -452,6 +492,11 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 		game, ok := b.gamesWhitelist[gid]
 		if !ok {
 			// stdlog.Println("skip giveaway by whitelist", gid)
+			return
+		}
+
+		if b.checkWonList(gid) {
+			// stdlog.Println("skip - already won! receve your gift!")
 			return
 		}
 
