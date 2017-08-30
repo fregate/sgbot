@@ -12,10 +12,10 @@ https://github.com/theWaR13/SteamGiveawayManager
 Next things to do
 * ~~Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games)~~
 * Use gzip parser to work with gzip http answers
-* ~~Add some timeouts (as python impl - I think more "human"-behavior)~~
-* ~~Test for proper daemon work in linux~~ 
-* ~~Add some AI(?) - priority maps. Enter for wishlisted rather than followed~~ If some points left - try to apply for wishlisted GAs
-* Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)
+* ~~Add some timeouts (as python impl - I think more "human"-behavior)~~ *Wait random amount of time before enter for giveaway (if bot can wait)*
+* ~~Test for proper daemon work in linux~~ *Work as deamon*
+* ~~Add some AI(?) - priority maps. Enter for wishlisted rather than followed~~ *If some points left - try to apply for wishlisted GAs*
+* ~~Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)~~ *Reload cookies if cookies.json newer than loaded, sent errors but do not stop service*
 * ~~Reload lists (or parse account) on the fly (without daemon restart)~~ *Reload list before every check*
 
 # Preparations
