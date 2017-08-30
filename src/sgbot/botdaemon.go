@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -72,16 +71,6 @@ func (service *Service) Manage() (string, error) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, os.Kill, syscall.SIGTERM)
 
-	// Set up listener for defined host and port
-	//listener, err := net.Listen("tcp", servicePort)
-	//if err != nil {
-	//		return "Possibly was a problem with the port binding", err
-	//	}
-
-	// set up channel on which to send accepted connections
-	//	listen := make(chan net.Conn, 100)
-	//	go acceptConnection(listener, listen)
-
 	// loop work cycle with accept connections or interrupt
 	// by system signal
 	for {
@@ -106,29 +95,6 @@ func (service *Service) Manage() (string, error) {
 	return usage, nil
 }
 
-// Accept a client connection and collect it in a channel
-func acceptConnection(listener net.Listener, listen chan<- net.Conn) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
-		}
-		listen <- conn
-	}
-}
-
-func handleClient(client net.Conn) {
-	for {
-		buf := make([]byte, 4096)
-		numbytes, err := client.Read(buf)
-		if numbytes == 0 || err != nil {
-			return
-		}
-		buf = append(buf, 32, 0x30)
-		client.Write(buf[:numbytes+2])
-	}
-}
-
 func init() {
 	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
@@ -147,20 +113,20 @@ func startBot(srv *Service) {
 
 	err := srv.bot.InitBot(configFileName, cookiesFileName, listsFileName)
 	if err != nil {
-		errlog.Println("error while initialize bot. stop service", err)
-		srv.bot.SendPanicMsg(fmt.Sprintf("error while initialize bot. stop service. %v", err))
+		errlog.Println("error while initialize bot.", err)
+		srv.bot.SendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err))
 		return
 	}
 
 	for {
 		count, err := srv.bot.Check()
 		if err != nil {
-			errlog.Println("error during check. stop service", err)
-			srv.bot.SendPanicMsg(fmt.Sprintf("error during check. stop service. %v", err))
+			errlog.Println("error during check.", err)
+			srv.bot.SendPanicMsg(fmt.Sprintf("error during check.\n%v", err))
 			break
 		}
-		stdlog.Println("wait for", (count + 1) * 60, "mins")
-		time.Sleep(time.Hour * time.Duration(count + 1))
+		stdlog.Println("wait for", (count+1)*60, "mins")
+		time.Sleep(time.Hour * time.Duration(count+1))
 	}
 }
 
