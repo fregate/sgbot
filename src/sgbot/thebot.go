@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -118,8 +119,8 @@ var requestHeaders = []pair{
 
 const (
 	baseUrl             string = "https://www.steamgifts.com"
-	sgWishlistUrl		string = "/giveaways/search?type=wishlist"
-	sgAccountInfo		string = "/giveaways/won"
+	sgWishlistUrl       string = "/giveaways/search?type=wishlist"
+	sgAccountInfo       string = "/giveaways/won"
 	baseSteamProfileUrl string = "http://steamcommunity.com/id/"
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
@@ -131,7 +132,10 @@ type TheBot struct {
 	token    string
 	points   int
 	baseUrl  *url.URL
-	client   *http.Client
+
+	// http client
+	client                  *http.Client
+	cookiesFileModifiedTime time.Time
 
 	botConfig         cfg
 	dialer            *gomail.Dialer
@@ -140,7 +144,7 @@ type TheBot struct {
 	cookiesFileName   string
 
 	gamesWhitelist map[uint64]string
-	gamesWon []uint64
+	gamesWon       []uint64
 
 	// page cache
 	currentDocument *goquery.Document
@@ -157,6 +161,38 @@ func (b *TheBot) clean() {
 	b.currentUrl = ""
 }
 
+func (b *TheBot) createClient() error {
+	fi, err := os.Stat(b.cookiesFileName)
+	if b.cookiesFileModifiedTime.After(fi.ModTime()) {
+		return nil
+	}
+
+	var ccc interface{}
+	err = config.ReadConfig(b.cookiesFileName, &ccc)
+	if err != nil {
+		return err
+	}
+
+	var cookies []*http.Cookie
+	m := ccc.(map[string]interface{})
+	for k, v := range m {
+		cookies = append(cookies, &http.Cookie{Name: k, Value: v.(string)})
+	}
+
+	jar, err := cookiejar.New(&cookiejar.Options{})
+	if err != nil {
+		return err
+	}
+
+	jar.SetCookies(b.baseUrl, cookies)
+	b.client = &http.Client{
+		Jar: jar,
+	}
+
+	b.cookiesFileModifiedTime = fi.ModTime()
+	return nil
+}
+
 // InitBot initilize bot fields, load configs
 func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 	// init bot class default fields
@@ -168,31 +204,6 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 	b.digestMsgs = make([]string, 0)
 
 	b.gamesListFileName, b.cookiesFileName, b.configFileName = listFile, cookieFile, configFile
-
-	// read cookies, create client
-	{
-		var ccc interface{}
-		err = config.ReadConfig(cookieFile, &ccc)
-		if err != nil {
-			return err
-		}
-
-		var cookies []*http.Cookie
-		m := ccc.(map[string]interface{})
-		for k, v := range m {
-			cookies = append(cookies, &http.Cookie{Name: k, Value: v.(string)})
-		}
-
-		jar, err := cookiejar.New(&cookiejar.Options{})
-		if err != nil {
-			return err
-		}
-
-		jar.SetCookies(b.baseUrl, cookies)
-		b.client = &http.Client{
-			Jar: jar,
-		}
-	}
 
 	// read steam profile, parse wishlist and followed games (also read mail-smtp settings)
 	{
@@ -378,7 +389,7 @@ func (b *TheBot) getUserInfo() (err error) {
 	b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
 
 	if b.userName == "" || b.token == "" {
-		return &BotError{time.Now(), "no user information"}
+		return &BotError{time.Now(), "no user information. please refresh cookies or parser"}
 	}
 
 	stdlog.Printf("receive info [user:%s][pts:%d]\n", b.userName, b.points)
@@ -394,7 +405,7 @@ func (b *TheBot) getUserInfo() (err error) {
 
 				b.gamesWon = append(b.gamesWon, n)
 
-				// 
+				//
 				//sinfo := s.Find("a.table__column__heading").First()
 				//u, _ := sinfo.Attr("href")
 				//t := sinfo.Text()
@@ -415,13 +426,13 @@ func (b *TheBot) checkWonList(gid uint64) bool {
 		return false
 	}
 
-    for _, v := range b.gamesWon {
-        if v == gid {
-            return true
-        }
-    }
+	for _, v := range b.gamesWon {
+		if v == gid {
+			return true
+		}
+	}
 
-    return false
+	return false
 }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
@@ -594,7 +605,7 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 			return 0, err
 		}
 		giveaways = b.getGiveaways(doc)
-		b.processGiveaways(giveaways, time.Hour * 24 * 7 * 5) // 5 weeks - all
+		b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
 	}
 
 	return count, nil
@@ -643,6 +654,11 @@ func (b *TheBot) Check() (count int, err error) {
 	stdlog.Println("bot checking...")
 
 	defer b.clean()
+
+	err = b.createClient()
+	if err != nil {
+		return
+	}
 
 	err = b.readGameLists(b.gamesListFileName)
 	if err != nil {
