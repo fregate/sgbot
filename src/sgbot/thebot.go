@@ -247,6 +247,8 @@ func (b *TheBot) readGameLists(listFile string) (err error) {
 			stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
 			return &BotError{time.Now(), "no games to win"}
 		}
+	} else {
+		stdlog.Println("err %v", err)
 	}
 
 	stdlog.Printf("successfully load games list [total entries:%d]\n", len(b.gamesWhitelist))
