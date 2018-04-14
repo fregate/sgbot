@@ -2,7 +2,7 @@
 
 SteamGifts bot to enter for whitelisted games
 
-I wish I would win all my followed and wishlisted games ;) I don't want win all the games in SG and this bot will apply only for whilelisted games (in future only for followed and wishlist in steam profile)
+I wish I would win all my followed and wishlisted games ;) I don't want win all the games in SG and this bot will apply only for whilelisted games.
 
 This is my first project in GO (any suggestions send in issues)
 
