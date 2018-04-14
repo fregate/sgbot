@@ -117,6 +117,26 @@ var requestHeaders = []pair{
 	pair{name: "X-Requested-With", value: "XMLHttpRequest"},
 }
 
+type wginfo struct {
+	Name string 		`json:"name"`
+	Capsule string 		`json:"capsule"`
+	ReviewScr int 		`json:"review_score"`
+	ReviewDesc string 	`json:"review_desc"`
+	Reviews string 		`json:"reviews_total"`
+	ReviewPcnt float64 	`json:"reviews_percent"`
+	ReleaseDate interface{} 	`json:"release_date"`
+	ReleaseStr string 	`json:"release_string"`
+	PlatformIcns string `json:"platform_icons"`
+	Subs interface{} 		`json:"subs"`
+	Screenshots interface{} 	`json:"screenshots"`
+	ReviewCss string 	`json:"review_css"`
+	Priority int 		`json:"priority"`
+	Added int 			`json:"added"`
+	Rank string 		`json:"rank"`
+	Tags interface{} 		`json:"tags"`
+	Win int 			`json:"win"`
+}
+
 const (
 	baseUrl             string = "https://www.steamgifts.com"
 	sgWishlistUrl       string = "/giveaways/search?type=wishlist"
@@ -288,12 +308,23 @@ func (b *TheBot) getSteamLists() (err error) {
 		return
 	}
 
-	doc.Find("div[id^='game']").Each(func(_ int, s *goquery.Selection) {
-		id, _ := s.Attr("id")
-		id = strings.Split(id, "_")[1]
-		numId, _ := strconv.ParseUint(id, 10, 64)
-		name := s.Find("h4.ellipsis").Text()
-		b.gamesWhitelist[numId] = name
+	doc.Find("script").Each(func(_ int, s *goquery.Selection) {
+		if idx := strings.Index(s.Text(), "g_rgAppInfo"); idx >= 0 {
+			parseText := s.Text()[idx:]
+			idx = strings.Index(parseText, "{")
+			idxEnd := strings.Index(parseText, "};")
+			ww := make(map[string]wginfo)
+			err = json.Unmarshal([]byte(parseText[idx:idxEnd+1]), &ww)
+			if err == nil {
+				stdlog.Println("wishlist entries", len(ww))
+				for id, info := range ww {
+					numId, _ := strconv.ParseUint(id, 10, 64)
+					b.gamesWhitelist[numId] = info.Name
+				}
+			} else {
+				stdlog.Println(err)
+			}
+		}
 	})
 
 	_, doc, err = b.getPageCustom(baseSteamProfileUrl + b.botConfig.SteamProfile + steamFollowed)
@@ -486,11 +517,9 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
-		// stdlog.Println(sgCode)
-
 		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
 		if !ok {
-			//stdlog.Println("no link?", sgCode)
+			errlog.Println("no link?", sgCode)
 			return
 		}
 
@@ -502,6 +531,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 		// get steam game id and check it whitelisted
 		gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
+		// stdlog.Println(gid)
 		game, ok := b.gamesWhitelist[gid]
 		if !ok {
 			// stdlog.Println("skip giveaway by whitelist", gid)
@@ -537,7 +567,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 	return giveaways
 }
 
-func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (count int) {
+func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (count, entries int) {
 	// sort giveaways by time asc
 	sec := func(t1, t2 *GiveAway) bool {
 		return t1.Time.UnixNano() < t2.Time.UnixNano()
@@ -554,8 +584,7 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		status, err := b.getGiveawayStatus(g.Url)
 		if err != nil {
 			stdlog.Println(err)
-			if !status {
-				// not enough points
+			if !status { // not enough points
 				count = count + 1
 				break
 			}
@@ -584,9 +613,10 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, g.Time.Sub(time.Now()).String())
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, g.Time.Format("2006-01-02 15:04:05"), g.Url))
 		b.points, _ = strconv.Atoi(strpts)
+		entries = entries + 1
 	}
 
-	return count
+	return count, entries
 }
 
 func (b *TheBot) parseGiveaways() (count int, err error) {
@@ -595,20 +625,23 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		return
 	}
 
-	stdlog.Println("check main page")
-	giveaways := b.getGiveaways(b.currentDocument)
-	count = b.processGiveaways(giveaways, time.Hour)
-
-	if count == 0 && b.points > 0 {
-		// enter for wishlist giveaways if any points left
-		stdlog.Println("check wishlist")
-		_, doc, err := b.getPageCustom(b.baseUrl.String() + sgWishlistUrl)
-		if err != nil {
-			return 0, err
-		}
-		giveaways = b.getGiveaways(doc)
-		b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
+	stdlog.Println("check wishlist")
+	_, doc, err := b.getPageCustom(b.baseUrl.String() + sgWishlistUrl)
+	if err != nil {
+		return 0, err
 	}
+	var entries int
+	giveaways := b.getGiveaways(doc)
+	stdlog.Println("found giveaways on page:", len(giveaways))
+	count, entries = b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
+	stdlog.Println("processed giveaways", entries);
+
+	stdlog.Println("check main page")
+	giveaways = b.getGiveaways(b.currentDocument)
+	stdlog.Println("found giveaways on page:", len(giveaways))
+	count, entries = b.processGiveaways(giveaways, time.Hour)
+
+	defer stdlog.Println("processed giveaways", entries);
 
 	return count, nil
 }
