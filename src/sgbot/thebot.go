@@ -613,9 +613,9 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		var timeDesc string
 		duration := g.Time.Sub(time.Now())
 		if duration.Minutes() < 60 {
-			timeDesc = fmt.Sprintf("Draw in %d minutes", duration.Minutes())
+			timeDesc = fmt.Sprintf("Draw in %.f minutes", duration.Minutes())
 		} else {
-			timeDesc = fmt.Sprintf("Draw in %d hour(s)", duration.Hours())
+			timeDesc = fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
 		}
 		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), g.GID, g.Name, timeDesc))
 		b.points, _ = strconv.Atoi(strpts)
