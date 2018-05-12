@@ -610,8 +610,14 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			count = count + 1
 			break
 		}
-		//stdlog.Printf(`enter for giveaway %d:"%s". start in %s`, g.GID, g.Name, g.Time.Sub(time.Now()).String())
-		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. Draw at %s. Reference %s", time.Now().Format("2006-01-02 15:04:05"), g.GID, g.Name, g.Time.Format("2006-01-02 15:04:05"), g.Url))
+		var timeDesc string
+		duration := g.Time.Sub(time.Now())
+		if duration.Minutes() < 60 {
+			timeDesc = fmt.Sprintf("Draw in %d minutes", duration.Minutes())
+		} else {
+			timeDesc = fmt.Sprintf("Draw in %d hour(s)", duration.Hours())
+		}
+		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), g.GID, g.Name, timeDesc))
 		b.points, _ = strconv.Atoi(strpts)
 		entries = entries + 1
 	}
