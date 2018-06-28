@@ -13,10 +13,11 @@ Next things to do
 * ~~Add config.json with steam profile link and parse followed and wishlisted games from it (remove gameslist.json? or leave it for additional games)~~
 * Use gzip parser to work with gzip http answers
 * ~~Add some timeouts (as python impl - I think more "human"-behavior)~~ *Wait random amount of time before enter for giveaway (if bot can wait)*
-* ~~Test for proper daemon work in linux~~ *Work as deamon*
+* ~~Test for proper daemon work in linux~~ *Work as daemon*
 * ~~Add some AI(?) - priority maps. Enter for wishlisted rather than followed~~ *If some points left - try to apply for wishlisted GAs*
 * ~~Add some notifications to user through email (won gift, need to refresh cookies, sync account, etc)~~ *Reload cookies if cookies.json newer than loaded, sent errors but do not stop service*
 * ~~Reload lists (or parse account) on the fly (without daemon restart)~~ *Reload list before every check*
+* Work with /sub/ giveaways. Parse all steam games (do not use steam auth or api - if any), parse steam sub page, decide to enter or not
 
 # Preparations
 1. **config.json** - bot config. Optional
