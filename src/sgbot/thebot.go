@@ -118,30 +118,16 @@ var requestHeaders = []pair{
 }
 
 type wginfo struct {
-	Name         string      `json:"name"`
-	Capsule      string      `json:"capsule"`
-	ReviewScr    int         `json:"review_score"`
-	ReviewDesc   string      `json:"review_desc"`
-	Reviews      string      `json:"reviews_total"`
-	ReviewPcnt   float64     `json:"reviews_percent"`
-	ReleaseDate  interface{} `json:"release_date"`
-	ReleaseStr   string      `json:"release_string"`
-	PlatformIcns string      `json:"platform_icons"`
-	Subs         interface{} `json:"subs"`
-	Screenshots  interface{} `json:"screenshots"`
-	ReviewCSS    string      `json:"review_css"`
-	Priority     int         `json:"priority"`
-	Added        int         `json:"added"`
-	Rank         string      `json:"rank"`
-	Tags         interface{} `json:"tags"`
-	Win          int         `json:"win"`
+	AppId     int  `json:"appid"`
+	Priority  int  `json:"priority"`
+	DateAdded int  `json:"added"`
 }
 
 const (
 	baseURL             string = "https://www.steamgifts.com"
 	sgWishlistURL       string = "/giveaways/search?type=wishlist"
 	sgAccountInfo       string = "/giveaways/won"
-	baseSteamProfileURL string = "http://steamcommunity.com/id/"
+	baseSteamProfileURL string = "https://steamcommunity.com/id/"
 	steamWishlist       string = "/wishlist/"
 	steamFollowed       string = "/followedgames/"
 )
@@ -303,30 +289,38 @@ func (b *TheBot) getSteamLists() (err error) {
 		return &BotError{time.Now(), "steam profile empty"}
 	}
 
+	// parse wish list entries
 	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.botConfig.SteamProfile + steamWishlist)
 	if err != nil {
-		return
+		stdlog.Println(err)
+	} else {
+		doc.Find("script").Each(func(_ int, s *goquery.Selection) {
+			if idx := strings.Index(s.Text(), "g_rgWishlistData"); idx >= 0 {
+				parseText := s.Text()[idx:]
+				idx = strings.Index(parseText, "[{")
+				idxEnd := strings.Index(parseText, "}];")
+				if idx < 0 || idxEnd < 0 {
+					stdlog.Println("parseText", parseText)
+					stdlog.Println("indeces", idx, idxEnd)
+					return
+				}
+				ww := []wginfo {}
+				err = json.Unmarshal([]byte(parseText[idx:idxEnd+2]), &ww)
+				if err == nil {
+					stdlog.Println("wishlist entries", len(ww))
+					for arridx := range ww {
+						id := uint64(ww[arridx].AppId)
+						b.gamesWhitelist[id] = fmt.Sprintf("Whishlist %s", id)
+						stdlog.Println("wihlist entry", id)
+					}
+				} else {
+					stdlog.Println(err)
+				}
+			}
+		})
 	}
 
-	doc.Find("script").Each(func(_ int, s *goquery.Selection) {
-		if idx := strings.Index(s.Text(), "g_rgAppInfo"); idx >= 0 {
-			parseText := s.Text()[idx:]
-			idx = strings.Index(parseText, "{")
-			idxEnd := strings.Index(parseText, "};")
-			ww := make(map[string]wginfo)
-			err = json.Unmarshal([]byte(parseText[idx:idxEnd+1]), &ww)
-			if err == nil {
-				stdlog.Println("wishlist entries", len(ww))
-				for id, info := range ww {
-					numID, _ := strconv.ParseUint(id, 10, 64)
-					b.gamesWhitelist[numID] = info.Name
-				}
-			} else {
-				stdlog.Println(err)
-			}
-		}
-	})
-
+	// parse followed games entries
 	_, doc, err = b.getPageCustom(baseSteamProfileURL + b.botConfig.SteamProfile + steamFollowed)
 	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
 		id, _ := s.Attr("data-appid")
