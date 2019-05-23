@@ -422,10 +422,15 @@ func (b *TheBot) getUserInfo() (err error) {
 	//	}
 	//	stdlog.Printf("[[[[%s]]]]", html)
 
+	b.userName = ""
+	b.token = ""
+
 	b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-	ttt, _ := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
-	b.token = b.parseToken(ttt)
-	b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+	ttt, res := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
+	if res == true {
+		b.token = b.parseToken(ttt)
+		b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+	}
 
 	if b.userName == "" || b.token == "" {
 		return &BotError{time.Now(), "no user information. please refresh cookies or parser"}
