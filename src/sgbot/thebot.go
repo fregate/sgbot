@@ -522,7 +522,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
-		x, ok := s.Find("a.giveaway__icon[rel='nofollow']").First().Attr("href")
+		x, ok := s.Find("a.giveaway__icon[target='_blank']").First().Attr("href")
 		if !ok {
 			errlog.Println("no link?", sgCode)
 			return
