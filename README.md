@@ -11,7 +11,10 @@ https://github.com/theWaR13/SteamGiveawayManager
 
 Next things to do
 * Work with /sub/ giveaways. Parse all steam games (do not use steam auth or api - if any), parse steam sub page, decide to enter or not
-** Sometimes it redirects from https://store.steampowered.com/sub/127633/ (ie) to https://store.steampowered.com/agecheck/sub/127633# , so it has to set cookie "wants_mature_content"=1 for store.steampowered.com domain, path = '/' (in client options)
+** Sometimes it redirects from https://store.steampowered.com/sub/127633/ (ie) to https://store.steampowered.com/agecheck/sub/127633# , so it has to set cookie 
+"wants_mature_content"=1 for store.steampowered.com domain, path = '/' (in client options)
+and
+"birthtime"=-729000000	domain:store.steampowered.com	path:/
 
 # Preparations
 1. **config.json** - bot config. Optional
