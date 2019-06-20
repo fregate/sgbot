@@ -23,6 +23,11 @@ https://github.com/theWaR13/SteamGiveawayManager
  + *if there is no "recipient" or "mail" not fiiled properly - no mail at all*
 2. **gameslist.json** - Optional. fill it with games. "SteamID":"Name", *Name - optional, all game titles takes from gifts page: you can leave it empty: "")* If no games loaded (profile + list) - bot stop
 3. **cookies.json** Required. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value:Domain:Path" (separated by colon)
+If you widh parse giveaways that points to /sub/ steam pages with age check, you have to set these cookies:
+    "wants_mature_content": "1:store.steampowered.com:/",
+    "birthtime": "60368401:store.steampowered.com:/", # about 1972/4/4
+    "lastagecheckage": "1-0-1972:store.steampowered.com:/"
+
 4. To run as daemon (tested only for linux)
   * sudo ./bot install
   * Set service working dir for ./bot path (/etc/systemd/system/sgbotservice.service -> [Service] -> WorkingDirectory=/path/to/executable
