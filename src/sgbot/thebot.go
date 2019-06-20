@@ -22,6 +22,7 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+// BotError. Description of BOT error
 type BotError struct {
 	When time.Time
 	What string
@@ -31,6 +32,7 @@ func (e *BotError) Error() string {
 	return fmt.Sprintf("at %v, %s", e.When, e.What)
 }
 
+// GiveAway. Definition of GA
 type GiveAway struct {
 	SGID string
 	GID  uint64
@@ -118,9 +120,9 @@ var requestHeaders = []pair{
 }
 
 type wginfo struct {
-	AppId     int  `json:"appid"`
-	Priority  int  `json:"priority"`
-	DateAdded int  `json:"added"`
+	AppID     int `json:"appid"`
+	Priority  int `json:"priority"`
+	DateAdded int `json:"added"`
 }
 
 const (
@@ -141,6 +143,7 @@ type TheBot struct {
 
 	// http client
 	client                  *http.Client
+	cookies                 []*http.Cookie
 	cookiesFileModifiedTime time.Time
 
 	botConfig         cfg
@@ -179,10 +182,14 @@ func (b *TheBot) createClient() error {
 		return err
 	}
 
-	var cookies []*http.Cookie
 	m := ccc.(map[string]interface{})
 	for k, v := range m {
-		cookies = append(cookies, &http.Cookie{Name: k, Value: v.(string)})
+		ck := strings.Split(v.(string), ":")
+		if len(ck) >= 3 {
+			b.cookies = append(b.cookies, &http.Cookie{Name: k, Value: ck[0], Domain: ck[1], Path: ck[2]})
+		} else {
+			stdlog.Println("wrong cookie (< 3 params)", k, v.(string))
+		}
 	}
 
 	jar, err := cookiejar.New(&cookiejar.Options{})
@@ -190,10 +197,7 @@ func (b *TheBot) createClient() error {
 		return err
 	}
 
-	jar.SetCookies(b.baseURL, cookies)
-	b.client = &http.Client{
-		Jar: jar,
-	}
+	b.client = &http.Client{Jar: jar}
 
 	b.cookiesFileModifiedTime = fi.ModTime()
 	return nil
@@ -304,14 +308,13 @@ func (b *TheBot) getSteamLists() (err error) {
 					stdlog.Println("indeces", idx, idxEnd)
 					return
 				}
-				ww := []wginfo {}
+				ww := []wginfo{}
 				err = json.Unmarshal([]byte(parseText[idx:idxEnd+2]), &ww)
 				if err == nil {
 					stdlog.Println("wishlist entries", len(ww))
 					for arridx := range ww {
-						id := uint64(ww[arridx].AppId)
-						b.gamesWhitelist[id] = fmt.Sprintf("Whishlist %s", id)
-						stdlog.Println("wihlist entry", id)
+						id := uint64(ww[arridx].AppID)
+						b.gamesWhitelist[id] = fmt.Sprintf("Whishlist %d", id)
 					}
 				} else {
 					stdlog.Println(err)
@@ -380,6 +383,14 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 
 	for _, h := range requestHeaders {
 		req.Header.Add(h.name, h.value)
+	}
+
+	for _, k := range b.cookies {
+		if k.Domain != pageURL.Host {
+			continue
+		}
+
+		req.AddCookie(k)
 	}
 
 	resp, err := b.client.Do(req)
@@ -495,6 +506,7 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 		return false, nil
 	}
 
+	// skip already entered
 	result := true
 	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
 		class, _ := s.Attr("class")
@@ -528,44 +540,79 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 			return
 		}
 
-		// TODO there is app/NUM and sub/NUM need to work with it somehow
-		if strings.Contains(x, "/sub/") {
-			// stdlog.Println("skip sub giveaway", x)
-			return
-		}
-
-		// get steam game id and check it whitelisted
-		gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
-		// stdlog.Println(gid)
-		game, ok := b.gamesWhitelist[gid]
-		if !ok {
-			// stdlog.Println("skip giveaway by whitelist", gid)
-			return
-		}
-
-		if b.checkWonList(gid) {
-			// stdlog.Println("skip - already won! receve your gift!")
-			return
-		}
-
 		// get steamgifts giveaway code (unique url)
 		sgURL, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		if !ok {
-			errlog.Println("skip giveaway - can't find url", gid)
+			errlog.Println("skip giveaway - can't find url", sgCode)
 			return
 		}
 
 		// get giveaway timestamp
 		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
 		if !ok {
-			errlog.Println("can't parse timestamp for", gid)
+			errlog.Println("can't parse timestamp for", sgCode)
 			return
 		}
 
 		t, _ := strconv.ParseInt(y, 10, 64)
 
-		// add nanoseconds to split giveaways which will be ended at one time
-		giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
+		if strings.Contains(x, "/sub/") { // parse sub page
+			// stdlog.Println("parse 'sub' giveaway", x)
+			_, subDoc, err := b.getPageCustom(x)
+			if err != nil {
+				errlog.Println("can't get page", x)
+				return
+			}
+
+			// doc := subDoc.Find("html")
+			// html, eee := doc.Html()
+			// if eee != nil {
+			// 	log.Fatal(err)
+			// }
+			// stdlog.Printf("[[[[%s]]]]", html)
+
+			subDoc.Find("div.tab_item").EachWithBreak(func(subIdx int, subs *goquery.Selection) bool {
+				subID, subOk := subs.Attr("data-ds-appid")
+				if !subOk {
+					return true
+				}
+
+				gid, _ := strconv.ParseUint(subID, 10, 64)
+
+				game, ok := b.gamesWhitelist[gid]
+				if !ok {
+					// stdlog.Println("skip giveaway by whitelist", gid)
+					return true
+				}
+
+				if b.checkWonList(gid) {
+					// stdlog.Println("skip - already won! receve your gift!")
+					return true
+				}
+
+				// add nanoseconds to split giveaways which will be ended at one time
+				giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
+				// stop parse sub page - we're decided to be in!
+				return false
+			})
+		} else { // parse single game GA
+			// get steam game id and check it whitelisted
+			gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
+			// stdlog.Println(gid)
+			game, ok := b.gamesWhitelist[gid]
+			if !ok {
+				// stdlog.Println("skip giveaway by whitelist", gid)
+				return
+			}
+
+			if b.checkWonList(gid) {
+				// stdlog.Println("skip - already won! receve your gift!")
+				return
+			}
+
+			// add nanoseconds to split giveaways which will be ended at one time
+			giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
+		}
 	})
 
 	// stdlog.Println(giveaways)
@@ -636,12 +683,25 @@ func (b *TheBot) parseGiveaways() (count int, err error) {
 		return
 	}
 
+	var entries int
+
+	// testContent, testErr := ioutil.ReadFile("page.html")
+	// if testErr != nil {
+	// 	return 0, testErr
+	// }
+	// bytesReader := bytes.NewReader(testContent)
+	// testDoc, testErr := goquery.NewDocumentFromReader(bytesReader)
+	// if testErr != nil {
+	// 	return 0, testErr
+	// }
+	// giveaways := b.getGiveaways(testDoc)
+	// count, entries = b.processGiveaways(giveaways, time.Hour)
+
 	stdlog.Println("check wishlist")
 	_, doc, err := b.getPageCustom(b.baseURL.String() + sgWishlistURL)
 	if err != nil {
 		return 0, err
 	}
-	var entries int
 	giveaways := b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entries = b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
