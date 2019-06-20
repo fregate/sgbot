@@ -152,7 +152,7 @@ type TheBot struct {
 	configFileName    string
 	cookiesFileName   string
 
-	gamesWhitelist map[uint64]string
+	gamesWhitelist map[uint64]struct{}
 	gamesWon       []uint64
 
 	// page cache
@@ -233,7 +233,7 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 }
 
 func (b *TheBot) readGameLists(listFile string) (err error) {
-	b.gamesWhitelist = make(map[uint64]string)
+	b.gamesWhitelist = make(map[uint64]struct{})
 
 	if b.botConfig.SteamProfile != "" {
 		err = b.getSteamLists()
@@ -247,12 +247,12 @@ func (b *TheBot) readGameLists(listFile string) (err error) {
 	err = config.ReadConfig(listFile, &ccc)
 	if err == nil {
 		m := ccc.(map[string]interface{})
-		for k, v := range m {
+		for k := range m {
 			q, err := strconv.ParseUint(k, 10, 32)
 			if err != nil {
 				break
 			}
-			b.gamesWhitelist[q] = v.(string)
+			b.gamesWhitelist[q] = struct{}{}
 		}
 
 		if len(b.gamesWhitelist) == 0 {
@@ -316,7 +316,7 @@ func (b *TheBot) getSteamLists() (err error) {
 					stdlog.Println("wishlist entries", len(ww))
 					for arridx := range ww {
 						id := uint64(ww[arridx].AppID)
-						b.gamesWhitelist[id] = fmt.Sprintf("Whishlist %d", id)
+						b.gamesWhitelist[id] = struct{}{}
 					}
 				} else {
 					stdlog.Println(err)
@@ -330,8 +330,7 @@ func (b *TheBot) getSteamLists() (err error) {
 	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
 		id, _ := s.Attr("data-appid")
 		numID, _ := strconv.ParseUint(id, 10, 64)
-		name := s.Find("div.gameListRowItemName > a").Text()
-		b.gamesWhitelist[numID] = name
+		b.gamesWhitelist[numID] = struct{}{}
 	})
 
 	stdlog.Println("steam profile parsed successfully")
@@ -536,6 +535,8 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
+		game := s.Find("a.giveaway__heading__name").First().Text()
+
 		x, ok := s.Find("a.giveaway__icon[target='_blank']").First().Attr("href")
 		if !ok {
 			errlog.Println("no link?", sgCode)
@@ -581,7 +582,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 				gid, _ := strconv.ParseUint(subID, 10, 64)
 
-				game, ok := b.gamesWhitelist[gid]
+				_, ok := b.gamesWhitelist[gid]
 				if !ok {
 					// stdlog.Println("skip giveaway by whitelist", gid)
 					return true
@@ -601,7 +602,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 			// get steam game id and check it whitelisted
 			gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
 			// stdlog.Println(gid)
-			game, ok := b.gamesWhitelist[gid]
+			_, ok := b.gamesWhitelist[gid]
 			if !ok {
 				// stdlog.Println("skip giveaway by whitelist", gid)
 				return
