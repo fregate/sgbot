@@ -79,10 +79,24 @@ def parseGamePage(session, app) :
         return True
 
     # check here for steamdb rating?
-    # steamDbPage = "https://steamdb.info/app/{}/"
+    steamDbPage = "https://steamdb.info/app/{}/"
     # there is games with very positive and positive rating and released less than year ago and not in EA
+    link = steamDbPage.format(app)
+    dbGamePage = session.get(link)
+    if dbGamePage.url != link :
+        # something strange - check page
+        return True
 
-    #print (link)
+    ratingValue = dbGamePage.html.find('meta[itemprop="ratingValue"]', first=True)
+    if ratingValue == None :
+        # game not yet released or do not have rating (too many user reviews)
+        return False
+
+    ratingValueFloat = float(ratingValue.attrs["content"])
+    if (ratingValueFloat < 83) :
+        # check this game
+        return True
+
     return False
 
 def main(argv) :
