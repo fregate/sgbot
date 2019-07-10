@@ -9,13 +9,18 @@ steamGamePage = "https://store.steampowered.com/app/{}/"
 
 def parseGamePage(session, app) :
     link = steamGamePage.format(app)
-    print (link)
+    # print (link)
     # set cookies
     cookies = {"wants_mature_content":'1', "birthtime":"60368401", "lastagecheckage":"1-0-1972"}
     gameAppPage = session.get(link, cookies=cookies)
     if gameAppPage.url != link :
         # game removed?
         return True
+
+    earlyAccessElem = gameAppPage.html.find("div[class='early_access_header']", first=True)
+    if earlyAccessElem != None :
+        # skip early access games - give them a chance
+        return False
 
     releaseDateElem = gameAppPage.html.find('div[class="date"]', first=True)
     if releaseDateElem == None :
@@ -36,20 +41,20 @@ def parseGamePage(session, app) :
 
     ratingValue = gameAppPage.html.find('meta[itemprop="ratingValue"]', first=True)
     if ratingValue == None :
-        # game not yet released or do not have rating
+        # game not yet released or do not have rating (too many user reviews)
         return False
 
     ratingValueInt = int(ratingValue.attrs["content"])
     if (ratingValueInt == 10) :
-        # return false - this is cool game
+        # skip - this is cool game
         return False
 
-    if (ratingValueInt < 7 and ratingValueInt != 0) :
+    if (ratingValueInt <= 7 and ratingValueInt != 0) :
         # very suspicios game - need to check
         return True
 
+    print (link)
     return False
-    #app = re.findall("\d{1,7}", link)[0]
 
 def main(argv) :
   print ("Start")
