@@ -6,8 +6,34 @@ import datetime
 from requests_html import HTMLSession
 
 steamGamePage = "https://store.steampowered.com/app/{}/"
+totalItems = 0
+currentItem = 0
+
+# Print iterations progress
+def printProgressBar (iteration, total, prefix = 'Progress:', suffix = 'Complete', decimals = 1, length = 100, fill = '█'):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
+    # Print New Line on Complete
+    if iteration == total: 
+        print()
 
 def parseGamePage(session, app) :
+    global currentItem
+    currentItem = currentItem + 1
+    printProgressBar(currentItem, totalItems)
     link = steamGamePage.format(app)
     # print (link)
     # set cookies
@@ -33,7 +59,6 @@ def parseGamePage(session, app) :
         # no release date - skip
         return False
 
-    print (str(releaseDate))
     now = datetime.datetime.now()
     if (now - releaseDate < datetime.timedelta(days=365)):
         # very fresh game to decide
@@ -53,14 +78,20 @@ def parseGamePage(session, app) :
         # very suspicios game - need to check
         return True
 
-    print (link)
+    # check here for steamdb rating?
+    # steamDbPage = "https://steamdb.info/app/{}/"
+    # there is games with very positive and positive rating and released less than year ago and not in EA
+
+    #print (link)
     return False
 
 def main(argv) :
+  global currentItem
+  global totalItems
+
   print ("Start")
 
   # some defines
-  # steamDbPage = "https://steamdb.info/app/{}/"
   steamFollowedGamesPage = "https://steamcommunity.com/id/{}/followedgames/"
 
   parser = argparse.ArgumentParser()
@@ -79,7 +110,11 @@ def main(argv) :
       app = re.search(pattern, lll.attrs["href"])[0]
       aaa[app] = lll.text
 
-  print ("Parse {} followed games".format(len(aaa)))
+  print ("Found {} games".format(len(aaa)))
+
+  currentItem = 0
+  totalItems = len(aaa)
+  printProgressBar(currentItem, totalItems)
 
   # single thread solution
   gamesToCheck = {steamGamePage.format(app):name for app,name in aaa.items() if parseGamePage(session, app)}
