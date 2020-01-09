@@ -9,8 +9,10 @@ steamGamePage = "https://store.steampowered.com/app/{}/"
 totalItems = 0
 currentItem = 0
 
+wishlistGames = []
+
 # Print iterations progress
-def printProgressBar (iteration, total, prefix = 'Progress:', suffix = 'Complete', decimals = 1, length = 100, fill = '█'):
+def printProgressBar (iteration, total, prefix = 'Progress:', suffix = 'Complete', decimals = 1, length = 100, fill = '>'):
     """
     Call in a loop to create terminal progress bar
     @params:
@@ -35,7 +37,9 @@ def parseGamePage(session, app) :
     currentItem = currentItem + 1
     printProgressBar(currentItem, totalItems)
     link = steamGamePage.format(app)
-    # print (link)
+
+    global wishlistGames
+
     # set cookies
     cookies = {"wants_mature_content":'1', "birthtime":"60368401", "lastagecheckage":"1-0-1972"}
     gameAppPage = session.get(link, cookies=cookies)
@@ -66,12 +70,13 @@ def parseGamePage(session, app) :
 
     ratingValue = gameAppPage.html.find('meta[itemprop="ratingValue"]', first=True)
     if ratingValue == None :
-        # game not yet released or do not have rating (too many user reviews)
+        # game not yet released or do not have rating (too less user reviews)
         return False
 
     ratingValueInt = int(ratingValue.attrs["content"])
     if (ratingValueInt == 10) :
         # skip - this is cool game
+        wishlistGames.append(link)
         return False
 
     if (ratingValueInt <= 7 and ratingValueInt != 0) :
@@ -96,12 +101,17 @@ def parseGamePage(session, app) :
     if (ratingValueFloat < 83) :
         # check this game
         return True
+    elif (ratingValueFloat > 93) :
+        # possible wishlist game?
+        wishlistGames.append(link)
 
     return False
 
 def main(argv) :
   global currentItem
   global totalItems
+
+  global wishlistGames
 
   print ("Start")
 
@@ -134,8 +144,13 @@ def main(argv) :
   gamesToCheck = {steamGamePage.format(app):name for app,name in aaa.items() if parseGamePage(session, app)}
 
   # print result
+  print ("Check these games to remove from followed games")
   for link,name in gamesToCheck.items() :
     print ("{}\t\t{}".format(link, name))
+
+  print ("\nCheck these games to promote from followed to wishlist")
+  for link in wishlistGames :
+    print ("{}".format(link))
 
 if __name__ == '__main__' :
     main(sys.argv[1:])
