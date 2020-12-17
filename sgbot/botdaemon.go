@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	cookiesFileName string = "./cookies.json"
-	listsFileName   string = "./gameslist.json"
-	configFileName  string = "./config.json"
+	cookiesFileName string = "/home/ubuntu/.config/sgbot/cookies.json"
+	listsFileName   string = "/home/ubuntu/.config/sgbot/gameslist.json"
+	configFileName  string = "/home/ubuntu/.config/sgbot/config.json"
 )
 
 const (
@@ -136,7 +136,7 @@ func main() {
 		return
 	}
 
-	srv, err := daemon.New(serviceName, serviceDescription)
+	srv, err := daemon.New(serviceName, serviceDescription, daemon.SystemDaemon)
 	if err != nil {
 		errlog.Println("Error: ", err)
 		os.Exit(1)

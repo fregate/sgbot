@@ -113,7 +113,6 @@ type pair struct {
 
 var requestHeaders = []pair{
 	pair{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-	//pair{name: "Accept-Encoding", value: "gzip, deflate, br"},
 	pair{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
 	pair{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
 	pair{name: "X-Requested-With", value: "XMLHttpRequest"},
@@ -222,10 +221,15 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 		err = config.ReadConfig(configFile, &b.botConfig)
 		if err != nil {
 			stdlog.Println(err)
+			return
 		}
 
 		if b.botConfig.isMailValid() {
-			b.dialer = gomail.NewDialer(b.botConfig.SMTPSettings.SMTPServer, b.botConfig.SMTPSettings.Port, b.botConfig.SMTPSettings.SMTPUsername, b.botConfig.SMTPSettings.SMTPUserpassword)
+			b.dialer = gomail.NewDialer(
+				b.botConfig.SMTPSettings.SMTPServer,
+				b.botConfig.SMTPSettings.Port,
+				b.botConfig.SMTPSettings.SMTPUsername,
+				b.botConfig.SMTPSettings.SMTPUserpassword)
 		}
 	}
 
@@ -491,7 +495,7 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 		return true, err
 	}
 
-	sel := doc.Find("div.sidebar--wide").First()
+	sel := doc.Find("div.widget-container")
 	if sel.Size() == 0 {
 		return true, &BotError{time.Now(), "strange page " + path}
 	}
@@ -501,7 +505,7 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 		return false, &BotError{time.Now(), "not enough points"}
 	}
 
-	sel = doc.Find("div[data-do='entry_insert']")
+	sel = doc.Find("div.sidebar__entry-insert")
 	// no buttons - exist or not enough points
 	if sel.Size() == 0 {
 		return false, nil
@@ -511,11 +515,8 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 	result := true
 	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
 		class, _ := s.Attr("class")
-		if class == "" || strings.Contains(class, "is-hidden") {
-			result = false
-			return false
-		}
-		return true
+		result = !strings.Contains(class, "is-hidden")
+		return result
 	})
 
 	return result, nil
@@ -630,8 +631,9 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 	By(sec).Sort(giveaways)
 
 	strpts := ""
+	time_now := time.Now().Add(period)
 	for _, g := range giveaways {
-		if g.Time.After(time.Now().Add(period)) {
+		if g.Time.After(time_now) {
 			stdlog.Println("enough parsing", g)
 			break
 		}
