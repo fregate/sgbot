@@ -1,0 +1,15 @@
+{
+    "profile" : "<steam profile>",
+    "digest" : <true, false>,
+
+    "mail" : {
+        "smtp" : "<smtp.address>",
+        "port" : <smtp.port.number>,
+        "username" : "<smtp.username",
+        "password" : "<smtp.password>"
+    },
+
+    "subjecttag" : "[SteamGiftsBOT]",
+    "recipient" : "<recipient>"
+}
+
