@@ -5,7 +5,7 @@
     "mail" : {
         "smtp" : "<smtp.address>",
         "port" : <smtp.port.number>,
-        "username" : "<smtp.username",
+        "username" : "<smtp.username>",
         "password" : "<smtp.password>"
     },
 
