@@ -17,12 +17,10 @@ import (
 
 	gomail "gopkg.in/gomail.v2"
 
-	"config"
-
 	"github.com/PuerkitoBio/goquery"
 )
 
-// BotError. Description of BOT error
+// BotError Description of BOT error
 type BotError struct {
 	When time.Time
 	What string
@@ -32,7 +30,7 @@ func (e *BotError) Error() string {
 	return fmt.Sprintf("at %v, %s", e.When, e.What)
 }
 
-// GiveAway. Definition of GA
+// GiveAway Definition of GA
 type GiveAway struct {
 	SGID string
 	GID  uint64
@@ -45,8 +43,7 @@ type GiveAway struct {
 // time sorter function
 type By func(p1, p2 *GiveAway) bool
 
-// Sort is a method on the function type, By, that sorts the argument slice according to the function.
-func (by By) Sort(entries []GiveAway) {
+func (by By) sortGAs(entries []GiveAway) {
 	ps := &timeSorter{
 		entries: entries,
 		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
@@ -75,32 +72,8 @@ func (s *timeSorter) Less(i, j int) bool {
 	return s.by(&s.entries[i], &s.entries[j])
 }
 
-type mailinfo struct {
-	SMTPServer       string `json:"smtp"`
-	Port             int    `json:"port"`
-	SMTPUsername     string `json:"username"`
-	SMTPUserpassword string `json:"password"`
-}
-
-type cfg struct {
-	SteamProfile string `json:"profile"`
-	SendDigest   bool   `json:"digest"`
-
-	SMTPSettings    mailinfo `json:"mail"`
-	EmailSubjectTag string   `json:"subjecttag"`
-	EmailRecipient  string   `json:"recipient"`
-}
-
-func (c mailinfo) isValid() bool {
-	return c.Port != 0 && c.SMTPServer != "" && c.SMTPUsername != ""
-}
-
-func (c cfg) isMailValid() bool {
-	return c.SMTPSettings.isValid() && c.EmailRecipient != ""
-}
-
 // {"type":"success","entry_count":"108","points":"147"}
-type PostResponse struct {
+type postResponse struct {
 	Type    string `json:"type"`
 	Entries string `json:"entry_count"`
 	Points  string `json:"points"`
@@ -133,7 +106,7 @@ const (
 	steamFollowed       string = "/followedgames/"
 )
 
-// TheBot - class for work with SteamGifts pages
+// TheBot class for work with SteamGifts pages
 type TheBot struct {
 	userName string
 	token    string
@@ -145,7 +118,7 @@ type TheBot struct {
 	cookies                 []*http.Cookie
 	cookiesFileModifiedTime time.Time
 
-	botConfig         cfg
+	botConfig         Configuration
 	dialer            *gomail.Dialer
 	gamesListFileName string
 	configFileName    string
@@ -171,28 +144,15 @@ func (b *TheBot) clean() {
 
 func (b *TheBot) createClient() error {
 	fi, err := os.Stat(b.cookiesFileName)
-	if b.cookiesFileModifiedTime.After(fi.ModTime()) {
-		return nil
-	}
-
-	b.cookies = nil
-
-	var ccc interface{}
-	err = config.ReadConfig(b.cookiesFileName, &ccc)
 	if err != nil {
 		return err
 	}
 
-	m := ccc.(map[string]interface{})
-	for k, v := range m {
-		ck := strings.Split(v.(string), ":")
-		if len(ck) >= 3 {
-			b.cookies = append(b.cookies, &http.Cookie{Name: k, Value: ck[0], Domain: ck[1], Path: ck[2]})
-		} else {
-			stdlog.Println("wrong cookie (< 3 params)", k, v.(string))
-		}
+	if b.cookiesFileModifiedTime.After(fi.ModTime()) {
+		return nil
 	}
 
+	b.cookies, err = ReadCookies(b.cookiesFileName)
 	jar, err := cookiejar.New(&cookiejar.Options{})
 	if err != nil {
 		return err
@@ -218,9 +178,8 @@ func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
 
 	// read steam profile, parse wishlist and followed games (also read mail-smtp settings)
 	{
-		err = config.ReadConfig(configFile, &b.botConfig)
+		b.botConfig, err = ReadConfiguration(configFile)
 		if err != nil {
-			stdlog.Println(err)
 			return
 		}
 
@@ -247,8 +206,7 @@ func (b *TheBot) readGameLists(listFile string) (err error) {
 	}
 
 	var ccc interface{}
-
-	err = config.ReadConfig(listFile, &ccc)
+	err = ReadConfig(listFile, &ccc)
 	if err == nil {
 		m := ccc.(map[string]interface{})
 		for k := range m {
@@ -369,7 +327,7 @@ func (b *TheBot) postRequest(path string, params url.Values) (status bool, pts s
 		return
 	}
 
-	r := PostResponse{}
+	r := postResponse{}
 	err = json.Unmarshal(answer, &r)
 
 	return r.Type == "success", r.Points, err
@@ -628,12 +586,12 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 	sec := func(t1, t2 *GiveAway) bool {
 		return t1.Time.UnixNano() < t2.Time.UnixNano()
 	}
-	By(sec).Sort(giveaways)
+	By(sec).sortGAs(giveaways)
 
 	strpts := ""
-	time_now := time.Now().Add(period)
+	timeNow := time.Now().Add(period)
 	for _, g := range giveaways {
-		if g.Time.After(time_now) {
+		if g.Time.After(timeNow) {
 			stdlog.Println("enough parsing", g)
 			break
 		}
