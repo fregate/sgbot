@@ -3,26 +3,31 @@ package main
 import (
 	"os"
 	"path"
-	"path/filepath"
 	"fmt"
 	"net/http"
 	"html/template"
-	"strconv"
-	"strings"
+	"errors"
+	// "strconv"
+	// "strings"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/abbot/go-http-auth"
 )
 
-type serveConfig struct {
-	httpAuthLogin string `json:"httpauth"`
-	httpAuthPwd string `json:"httppwd"`
+//go:generate python3 generator.py ../assets/static/index.html index.go
 
-	listenPort uint16 `json:"port"`
-	staticFiles string `json:"files"`
+// ServeConfig holds web application settings
+type ServeConfig struct {
+	HTTPAuthLogin  string  `json:"httpauth"`
+	HTTPAuthPwd    string  `json:"httppwd"`
+
+	ListenPort   uint16  `json:"port"`
+	StaticFiles  string  `json:"files"`
 }
 
-func (c serveConfig) isWebConfigValid() bool {
-	return c.httpAuthLogin != "" && c.httpAuthPwd != ""
+func (c ServeConfig) isWebConfigValid() bool {
+	return c.HTTPAuthLogin != "" && c.HTTPAuthPwd != ""
 }
 
 // WebConfig serve web application for manage json configuration for the Bot
@@ -32,7 +37,7 @@ type WebConfig struct {
 	configFileName    string
 	cookiesFileName   string
 
-	serveConfig serveConfig
+	serveConfig ServeConfig
 }
 
 // InitWebConfig reads configuration file for web application
@@ -64,7 +69,6 @@ func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err 
 
 	w.gamesListFileName, w.cookiesFileName, w.configFileName = listFile, cookieFile, configFile
 
-	// read steam profile, parse wishlist and followed games (also read mail-smtp settings)
 	{
 		err = ReadConfig(w.configFileName, &w.serveConfig)
 		if err != nil {
@@ -74,15 +78,15 @@ func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err 
 
 		if !w.serveConfig.isWebConfigValid() {
 			stdlog.Println("No WebConfig settings. No WebUI")
-			return
+			return errors.New("Invalid web application settings")
 		}
 
-		if w.serveConfig.staticFiles == "" {
-			w.serveConfig.staticFiles = path.Join(path.Dir(w.configFileName), "static")
+		if w.serveConfig.StaticFiles == "" {
+			w.serveConfig.StaticFiles = path.Join(path.Dir(w.configFileName), "static")
 		}
 
-		if w.serveConfig.listenPort < 1024 {
-			w.serveConfig.listenPort = 8080
+		if w.serveConfig.ListenPort < 1024 {
+			w.serveConfig.ListenPort = 8080
 		}
 	}
 
@@ -113,54 +117,22 @@ func getSteamPage(id uint64) string {
 
 // Serve runs http service on configured port
 func (w *WebConfig) Serve() (err error) {
-	var games map[string]uint64
-	var ccc interface{}
-	err = ReadConfig(w.gamesListFileName, &ccc)
-	if err != nil {
-		stdlog.Println(err)
-		return
-	}
-
-	m := ccc.(map[string]string)
-	for k, name := range m {
-		q, err := strconv.ParseUint(k, 10, 32)
-		if err != nil {
-			break
-		}
-		games[name] = q
-	}
-
-	cookies, err := ReadCookies(w.cookiesFileName)
-	if err != nil {
-		return
-	}
-
-	c := ccc.(map[string]interface{})
-	for k, v := range c {
-		ck := strings.Split(v.(string), ":")
-		if len(ck) >= 3 {
-			cookies = append(cookies, &http.Cookie{Name: k, Value: ck[0], Domain: ck[1], Path: ck[2]})
-		} else {
-			stdlog.Println("wrong cookie (< 3 params)", k, v.(string))
-		}
-	}
-
-	configStruct, err := ReadConfiguration(w.configFileName)
-	if err != nil {
-		return
-	}
-
 	authenticator := auth.NewBasicAuthenticator("Enter login and password", func(user, realm string) string {
-		if user == w.serveConfig.httpAuthLogin {
-			return w.serveConfig.httpAuthPwd
+		if user == w.serveConfig.HTTPAuthLogin {
+			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(w.serveConfig.HTTPAuthPwd), bcrypt.DefaultCost)
+			if err != nil {
+				stdlog.Println("Error crypt pwd", err)
+				return ""
+			}
+
+			return string(hashedPassword)
 		}
 
 		return ""
 	})
 
 	http.HandleFunc("/", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
-		fp := filepath.Join(w.serveConfig.staticFiles, filepath.Clean(req.URL.Path))
-		tmpl, _ := template.ParseFiles(fp)
+		tmpl, _ := template.New("layout").Parse(indexTemplate)
 		data := struct {
 			Title string
 			Body string
@@ -173,7 +145,7 @@ func (w *WebConfig) Serve() (err error) {
 
 	http.NotFoundHandler()
 
-	err = http.ListenAndServe(fmt.Sprint(":", w.serveConfig.listenPort), nil)
+	err = http.ListenAndServe(fmt.Sprint(":", w.serveConfig.ListenPort), nil)
 	if err != nil {
 		stdlog.Println("Fatal. Error starting http server : ", err)
 		return
