@@ -1,5 +1,6 @@
 import argparse
 import sys
+import html
 
 def main(argv) :
 	parser = argparse.ArgumentParser()
@@ -14,9 +15,11 @@ def main(argv) :
 		package main
 
 		const (
-			indexTemplate string = `{}`
+			indexTemplate string = `{}
+			{}
+			{}`
 		)
-		""".format(read_data))
+		""".format('{{define "layout"}}', read_data, '{{end}}'))
 
 if __name__ == '__main__' :
 	main(sys.argv[1:])

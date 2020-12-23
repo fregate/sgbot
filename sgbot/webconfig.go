@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"html/template"
 	"errors"
-	// "strconv"
-	// "strings"
+	"io/ioutil"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -93,28 +93,6 @@ func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err 
 	return
 }
 
-/* func HelloWorld(w http.ResponseWriter, r *http.Request) {
-  fmt.Fprintf(w, "Hello World!")
-} */
-
-/* func BasicAuth(w *WebConfig, handler http.HandlerFunc, realm string) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		user, pass, ok := req.BasicAuth()
-		if !ok || user != w.serveConfig.httpAuthLogin || pass != w.serveConfig.httpAuthPwd {
-			writer.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
-			writer.WriteHeader(401)
-			writer.Write([]byte("You are Unauthorized to access the application.\n"))
-			return
-		}
-		fileServer := http.FileServer(http.Dir(w.serveConfig.staticFiles))
-		handler(writer, req)
-	}
-} */
-
-func getSteamPage(id uint64) string {
-	return fmt.Sprint("https://store.steampowered.com/app/", id)
-}
-
 // Serve runs http service on configured port
 func (w *WebConfig) Serve() (err error) {
 	authenticator := auth.NewBasicAuthenticator("Enter login and password", func(user, realm string) string {
@@ -132,18 +110,88 @@ func (w *WebConfig) Serve() (err error) {
 	})
 
 	http.HandleFunc("/", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+		games, err := ioutil.ReadFile(w.gamesListFileName)
+		if err != nil {
+			http.Error(writer, fmt.Sprint("Error reading games list file {}", err), http.StatusInternalServerError)
+		}
+
 		tmpl, _ := template.New("layout").Parse(indexTemplate)
 		data := struct {
-			Title string
-			Body string
+			GamesList string
+			CookiesList string
+			Config string
 		} {
-			Title: "First template",
-			Body: "Body tezxt",
+			GamesList: string(games),
+			Config: `{ "profile" : "fregate" }`,
+			CookiesList: `{"PHPSESSID": "<PHPSESSID>:www.steamgifts.com:/"}`,
 		}
 		tmpl.ExecuteTemplate(writer, "layout", data)
 	}))
 
-	http.NotFoundHandler()
+	http.HandleFunc("/savegames", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+		if req.Method != http.MethodPost {
+			http.Error(writer, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := ioutil.ReadAll(req.Body)
+		if err != nil {
+			http.Error(writer, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+
+		f, err := os.OpenFile(w.gamesListFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			http.Error(writer, "Error opening gamelist file", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = f.Write(body)
+		if err != nil {
+			http.Error(writer, "Error writing gamelist file", http.StatusInternalServerError)
+			return
+		}
+		f.Close()
+
+		fmt.Fprint(writer, "ok")
+	}))
+
+	http.HandleFunc("/savecookies", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+	}))
+
+	http.HandleFunc("/saveconfig", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+	}))
+
+	http.HandleFunc("/parsepage", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+		if req.Method != http.MethodPost {
+			http.Error(writer, "Invalid request method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		body, err := ioutil.ReadAll(req.Body)
+		if err != nil {
+			http.Error(writer, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+
+		// TODO: parse real steam page
+
+		var response string
+		parts := strings.Split(string(body), "/")
+		for i := len(parts)-1; i >= 0; i-- {
+			if len(parts[i]) == 0 {
+				continue
+			}
+
+			if parts[i] == "app" {
+				break
+			}
+
+			response = ":" + parts[i] + response
+		}
+		response = "#" + response[1:]
+		fmt.Fprint(writer, response)
+	}))
 
 	err = http.ListenAndServe(fmt.Sprint(":", w.serveConfig.ListenPort), nil)
 	if err != nil {
