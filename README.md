@@ -11,16 +11,20 @@ https://github.com/theWaR13/SteamGiveawayManager
 
 # Preparations
 1. **config.json** - bot config. Optional
- + profile - If you want to parse your steam profile. You need only name, not whole URL. Optional.
- + mail - set smtp settings for sends some notifications (optional)
-   * smtp - smtp server
-   * port - smtp server port
-   * username - smtp authorization username (mail will be sent from this email)
-   * password - smtp auth password (*not tested without auth*)
- + digest - send daily digest for the previous day (or in panic message - current digest)
- + subjecttag - tag in mail subject (i.e. [SG_BOT])
- + recipient - mail will be send to this email
+ + `profile` - If you want to parse your steam profile. You need only name, not whole URL. Optional.
+ + `mail` - set smtp settings for sends some notifications (optional)
+   * `smtp` - smtp server
+   * `port-num` - smtp server port
+   * `username` - smtp authorization username (mail will be sent from this email)
+   * `password` - smtp auth password (*not tested without auth*)
+ + `digest` - send daily digest for the previous day (or in panic message - current digest)
+ + `subjecttag` - tag in mail subject (i.e. [SG_BOT])
+ + `recipient` - mail will be send to this email
  + *if there is no "recipient" or "mail" not fiiled properly - no mail at all*
+ simple server config (optional). these paramters can'be changed through web ui. to apply changes bot must be restarted
+ + `httpauth` - http simple auth login
+ + `httppwd` - http simple auth password
+ + `web-port-num` - http server listening port (default 8080) (don't forget to open it in firewall!)
 2. **gameslist.json** - Optional. fill it with games. "SteamID":"Name", *Name - optional, all game titles takes from gifts page: you can leave it empty: "")* If no games loaded (profile + list) - bot stop
 3. **cookies.json** Required. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value:Domain:Path" (separated by colon)
 If you widh parse giveaways that points to /sub/ steam pages with age check, you have to set these cookies:
@@ -33,7 +37,7 @@ If you widh parse giveaways that points to /sub/ steam pages with age check, you
   * Set service working dir for ./bot path (/etc/systemd/system/sgbotservice.service -> [Service] -> WorkingDirectory=/path/to/executable
   * (sudo) systemctl daemon-reload
   * sudo service sgbotservice start
-  * sudo service sgbotservice status
+  * service sgbotservice status
   * profit!
   
 # External imports

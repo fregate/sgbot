@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"path"
 
 	"github.com/takama/daemon"
 )
@@ -31,6 +32,7 @@ type Service struct {
 	daemon.Daemon
 
 	bot *TheBot
+	server *WebConfig
 }
 
 //	dependencies that are NOT required by the service, but might be used
@@ -40,7 +42,6 @@ var stdlog, errlog *log.Logger
 
 // Manage by daemon commands or run the daemon
 func (service *Service) Manage() (string, error) {
-
 	usage := "Usage: myservice install | remove | start | stop | status"
 
 	// if received any kind of command, do it
@@ -109,9 +110,22 @@ func startBot(srv *Service) {
 		}
 	}()
 
+	configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs := configFileName, cookiesFileName, listsFileName
+	if len(os.Args) > 1 && os.Args[1] == "test" {
+		configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs = path.Base(configFileName), path.Base(cookiesFileName), path.Base(listsFileName)
+	}
+
+	srv.server = &WebConfig{}
+	err := srv.server.InitWebConfig(configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs)
+	if err != nil {
+		stdlog.Println("error while initialize web app.", err)
+	} else {
+		go srv.server.Serve()
+	}
+
 	srv.bot = &TheBot{}
 
-	err := srv.bot.InitBot(configFileName, cookiesFileName, listsFileName)
+	err = srv.bot.InitBot(configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs)
 	if err != nil {
 		errlog.Println("error while initialize bot.", err)
 		srv.bot.SendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err))
@@ -132,7 +146,7 @@ func startBot(srv *Service) {
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "test" {
-		startBot(&Service{nil, nil})
+		startBot(&Service{nil, nil, nil})
 		return
 	}
 
@@ -141,7 +155,7 @@ func main() {
 		errlog.Println("Error: ", err)
 		os.Exit(1)
 	}
-	service := &Service{srv, nil}
+	service := &Service{srv, nil, nil}
 	status, err := service.Manage()
 	if err != nil {
 		errlog.Println(status, "\nError: ", err)

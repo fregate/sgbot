@@ -1,6 +1,6 @@
 // package config works with settings and returns named pairs
 
-package config
+package main
 
 import (
         "encoding/json"
