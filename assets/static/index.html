@@ -36,7 +36,7 @@
   </ul>
 
   <div class='tab-content'>
-    <div class='tab-pane fade show active border border-top-0 rounded-bottom p-1' id='games' role='tabpanel' aria-labelledby='games-tab'>
+    <div class='tab-pane show active border border-top-0 rounded-bottom p-1' id='games' role='tabpanel' aria-labelledby='games-tab'>
       <div class='list-group' id='games-div'>
       </div>
       <p></p>
@@ -47,10 +47,16 @@
         </div>
       </div>
       <p></p>
-      <button type='button' class='btn btn btn-primary' id='save-games'><i class='fas fa-cloud-upload-alt'>&nbsp;</i>&nbsp;Save changes</button>
+      <div class="alert alert-success" role="alert" id="games-success-alert" hidden>
+        Games List saved successfully!
+      </div>
+      <div class="alert alert-danger" role="alert" id="games-error-alert" hidden>
+        Error while saving. See logs for details.
+      </div>
+      <button type='button' class='btn btn btn-primary' id='save-games'><i class='fas fa-cloud-upload-alt'>&nbsp;</i>&nbsp;Save games</button>
     </div>
 
-    <div class='tab-pane fade border border-top-0 rounded-bottom p-1' id='cookies' role='tabpanel' aria-labelledby='cookies-tab'>
+    <div class='tab-pane border border-top-0 rounded-bottom p-1' id='cookies' role='tabpanel' aria-labelledby='cookies-tab'>
       <div class='list-group' id='cookies-div'>
       </div>
       <p></p>
@@ -66,13 +72,42 @@
         </div>
       </div>
       <p></p>
-      <button type='button' class='btn btn btn-primary' id='save-games'><i class='fas fa-cloud-upload-alt'>&nbsp;</i>&nbsp;Save changes</button>
+      <div class="alert alert-success" role="alert" id="cookies-success-alert" hidden>
+        Cookies saved successfully!
+      </div>
+      <div class="alert alert-danger" role="alert" id="cookies-error-alert" hidden>
+        Error while saving. See logs for details.
+      </div>
+      <button type='button' class='btn btn btn-primary' id='save-cookies'><i class='fas fa-cloud-upload-alt'>&nbsp;</i>&nbsp;Save cookies</button>
     </div>
 
-    <div class='tab-pane fade border border-top-0 rounded-bottom p-1' id='config' role='tabpanel' aria-labelledby='config-tab'>
+    <div class='tab-pane border border-top-0 rounded-bottom p-1' id='config' role='tabpanel' aria-labelledby='config-tab'>
+      <p></p>
+      <div class="alert alert-warning" role="alert">
+        Config changes will apply only after manual bot restart!
+      </div>
+      <div class="alert alert-success" role="alert" id="config-success-alert" hidden>
+        Config saved successfully!
+      </div>
+      <div class="alert alert-danger" role="alert" id="config-error-alert" hidden>
+        Error while saving. See logs for details.
+      </div>
+      <button type='button' class='btn btn btn-primary' id='save-config'><i class='fas fa-cloud-upload-alt'>&nbsp;</i>&nbsp;Save changes</button>
     </div>
   </div>
 <script>
+  Object.defineProperty(String.prototype, 'hashCode', {
+    value: function() {
+      var hash = 0, i, chr;
+      for (i = 0; i < this.length; i++) {
+        chr   = this.charCodeAt(i);
+        hash  = ((hash << 5) - hash) + chr;
+        hash |= 0; // Convert to 32bit integer
+      }
+      return hash;
+    }
+  });
+
   function RenderGamesList() {
     $("#game-edit").off();
     $("#game-remove").off();
@@ -89,7 +124,7 @@
           <img class='rounded' height=43 src='https://steamcdn-a.akamaihd.net/steam/apps/" + g + "/capsule_231x87.jpg'/> \
           &nbsp;" + gameList[g] + " <i><small class='text-black-50'>(" + g + ")</small></i> \
         </a> \
-        <span class='btn-group btn-group-sm float-right' role='group' aria-label='Basic example'> \
+        <span class='btn-group btn-group-sm float-right' role='group'> \
           <button type='button' class='btn btn-warning' id='game-edit' data-game='" + g + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
           <button type='button' class='btn btn-danger' id='game-remove' data-game='" + g + "'><i class='fas fa-trash' title='Remove'>&nbsp;</i></button> \
         </span> \
@@ -123,6 +158,7 @@
       const game = $(this).data('game');
       $("#edit-game-" + game).attr("hidden", true);
       $("#game-link-" + game).attr("hidden", false);
+      RenderGamesList();
     });
 
     $("button#button-edit-game").click(function() {
@@ -173,7 +209,7 @@
     });
   }
 
-  // attach to buttons
+  // attach to gameslist buttons
   $('#button-add-game').click(function() {
     GameParse('input#new-game-url', this);
   });
@@ -199,7 +235,101 @@
     });
   });
 
+  function RenderCookiesList() {
+    $("#cookie-edit").off();
+    $("#cookie-remove").off();
+    $("#button-edit-cookie-cancel").off();
+    $("#button-edit-cookie").off();
+
+    $('#cookies-div').empty();
+    for (const c in cookiesList) {
+      $('#cookies-div').append(
+        "<li class='list-group-item bg-light'> \
+          <div class='d-flex flex-row'> \
+            <span class='w-25 mr-3'> " + c + "</span> \
+            <div class='input-group' id='cookie-field-" + c.hashCode() + "'> \
+              <input type='text' class='form-control' placeholder='Cookie params' disabled id='edit-cookie-" + c.hashCode() + "' value='" + cookiesList[c] + "'> \
+              <span class='input-group-append'> \
+                <button type='button' class='btn btn-warning' id='cookie-edit' data-cookie='" + c + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
+                <button type='button' class='btn btn-danger' id='cookie-remove' data-cookie='" + c + "'><i class='fas fa-trash' title='Remove'>&nbsp;</i></button> \
+                <button hidden type='button' class='btn btn-success' id='button-edit-cookie' data-cookie='" + c + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
+                <button hidden type='button' class='btn btn-secondary' id='button-edit-cookie-cancel' data-cookie='" + c + "'><i class='fas fa-window-close' title='Cancel'>&nbsp;</i></button> \
+              </span> \
+            </div> \
+          </div> \
+        </li>"
+      );
+    }
+
+    $("button#cookie-edit").click(function() {
+      const cookie = $(this).data('cookie');
+      $("#edit-cookie-" + cookie.hashCode()).attr("disabled", false);
+
+      $(this).attr("hidden", true);
+      $("#cookie-remove[data-cookie='" + cookie + "']").attr("hidden", true);
+      $("#button-edit-cookie[data-cookie='" + cookie + "']").attr("hidden", false);
+      $("#button-edit-cookie-cancel[data-cookie='" + cookie + "']").attr("hidden", false);
+    });
+
+    $("button#cookie-remove").click(function() {
+      const cookie = $(this).data('cookie');
+      delete cookiesList[cookie];
+      RenderCookiesList();
+    });
+
+    $("button#button-edit-cookie-cancel").click(function() {
+      const cookie = $(this).data('cookie');
+      $(this).attr("hidden", true);
+      $("#button-edit-cookie[data-cookie='" + cookie + "']").attr("hidden", true);
+      $("#cookie-edit[data-cookie='" + cookie + "']").attr("hidden", false);
+      $("#cookie-remove[data-cookie='" + cookie + "']").attr("hidden", false);
+      RenderCookiesList();
+    });
+
+    $("button#button-edit-cookie").click(function() {
+      const cookie = $(this).data('cookie');
+      $(this).attr("hidden", true);
+      $("#button-edit-cookie[data-cookie='" + cookie + "']").attr("hidden", true);
+      $("#cookie-edit[data-cookie='" + cookie + "']").attr("hidden", false);
+      $("#cookie-remove[data-cookie='" + cookie + "']").attr("hidden", false);
+      cookiesList[cookie] = $("#edit-cookie-" + cookie.hashCode()).val();
+      RenderCookiesList();
+    });
+  }
+
+  // attach to cookies list buttons
+  $('#button-add-cookie').click(function() {
+    const name = $('#cookie-name').val();
+    const value = $('#cookie-value').val() + ":" + $('#cookie-domain').val() + ":" + $('#cookie-path').val();
+    cookiesList[name] = value;
+    RenderCookiesList();
+    $("input[id^=cookie-]").val("");
+  });
+
+  $('#save-cookies').click(function() {
+    var button = this;
+    $(button).attr('disabled', true);
+    fetch('/savecookies', {
+      method: 'post',
+      body: JSON.stringify(cookiesList),
+    })
+    .then(async function (response) {
+      $(button).attr('disabled', false);
+      if (response.ok) {
+        $("#cookies-success-alert").attr("hidden", false);
+      } else {
+        $("#cookies-error-alert").attr("hidden", false);
+      }
+    }).catch(function (err) {
+      $(button).attr('disabled', false);
+      $("#cookies-error-alert").attr("hidden", false);
+      console.error('Something went wrong.', err);
+    });
+  });
+
   RenderGamesList();
+  RenderCookiesList();
+  // RenderConfig();
 </script>
 </body>
 </html>

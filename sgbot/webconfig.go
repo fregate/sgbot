@@ -93,6 +93,35 @@ func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err 
 	return
 }
 
+func handleFileSave(writer http.ResponseWriter, req *auth.AuthenticatedRequest, fileName string) (err error) {
+	if req.Method != http.MethodPost {
+		http.Error(writer, "Invalid request method", http.StatusMethodNotAllowed)
+		return errors.New("invalid request method")
+	}
+
+	body, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		http.Error(writer, "Error reading request body", http.StatusInternalServerError)
+		return errors.New("error reading request")
+	}
+
+	f, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		http.Error(writer, "Error opening file", http.StatusInternalServerError)
+		return errors.New("error opening file")
+	}
+
+	_, err = f.Write(body)
+	if err != nil {
+		http.Error(writer, "Error writing file", http.StatusInternalServerError)
+		return errors.New("error writing file")
+	}
+	f.Close()
+
+	fmt.Fprint(writer, "ok")
+	return
+}
+
 // Serve runs http service on configured port
 func (w *WebConfig) Serve() (err error) {
 	authenticator := auth.NewBasicAuthenticator("Enter login and password", func(user, realm string) string {
@@ -113,6 +142,13 @@ func (w *WebConfig) Serve() (err error) {
 		games, err := ioutil.ReadFile(w.gamesListFileName)
 		if err != nil {
 			http.Error(writer, fmt.Sprint("Error reading games list file {}", err), http.StatusInternalServerError)
+			return
+		}
+
+		cookies, err := ioutil.ReadFile(w.cookiesFileName)
+		if err != nil {
+			http.Error(writer, fmt.Sprint("Error reading games list file {}", err), http.StatusInternalServerError)
+			return
 		}
 
 		tmpl, _ := template.New("layout").Parse(indexTemplate)
@@ -123,43 +159,30 @@ func (w *WebConfig) Serve() (err error) {
 		} {
 			GamesList: string(games),
 			Config: `{ "profile" : "fregate" }`,
-			CookiesList: `{"PHPSESSID": "<PHPSESSID>:www.steamgifts.com:/"}`,
+			CookiesList: string(cookies),
 		}
 		tmpl.ExecuteTemplate(writer, "layout", data)
 	}))
 
 	http.HandleFunc("/savegames", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
-		if req.Method != http.MethodPost {
-			http.Error(writer, "Invalid request method", http.StatusMethodNotAllowed)
-			return
-		}
-
-		body, err := ioutil.ReadAll(req.Body)
+		err := handleFileSave(writer, req, w.gamesListFileName)
 		if err != nil {
-			http.Error(writer, "Error reading request body", http.StatusInternalServerError)
-			return
+			stdlog.Println("Error in games list handler", err)
 		}
-
-		f, err := os.OpenFile(w.gamesListFileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-		if err != nil {
-			http.Error(writer, "Error opening gamelist file", http.StatusInternalServerError)
-			return
-		}
-
-		_, err = f.Write(body)
-		if err != nil {
-			http.Error(writer, "Error writing gamelist file", http.StatusInternalServerError)
-			return
-		}
-		f.Close()
-
-		fmt.Fprint(writer, "ok")
 	}))
 
 	http.HandleFunc("/savecookies", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+		handleFileSave(writer, req, w.cookiesFileName)
+		if err != nil {
+			stdlog.Println("Error in cookies file handler", err)
+		}
 	}))
 
 	http.HandleFunc("/saveconfig", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
+		handleFileSave(writer, req, w.configFileName)
+		if err != nil {
+			stdlog.Println("Error in config file handler", err)
+		}
 	}))
 
 	http.HandleFunc("/parsepage", authenticator.Wrap(func(writer http.ResponseWriter, req *auth.AuthenticatedRequest) {
