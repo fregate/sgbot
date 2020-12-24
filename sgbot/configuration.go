@@ -2,7 +2,7 @@ package main
 
 type mailinfo struct {
 	SMTPServer       string `json:"smtp"`
-	Port             int    `json:"port"`
+	Port             int    `json:"port-num"`
 	SMTPUsername     string `json:"username"`
 	SMTPUserpassword string `json:"password"`
 }

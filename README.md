@@ -14,7 +14,7 @@ https://github.com/theWaR13/SteamGiveawayManager
  + `profile` - If you want to parse your steam profile. You need only name, not whole URL. Optional.
  + `mail` - set smtp settings for sends some notifications (optional)
    * `smtp` - smtp server
-   * `port` - smtp server port
+   * `port-num` - smtp server port
    * `username` - smtp authorization username (mail will be sent from this email)
    * `password` - smtp auth password (*not tested without auth*)
  + `digest` - send daily digest for the previous day (or in panic message - current digest)
@@ -24,8 +24,7 @@ https://github.com/theWaR13/SteamGiveawayManager
  simple server config (optional). these paramters can'be changed through web ui. to apply changes bot must be restarted
  + `httpauth` - http simple auth login
  + `httppwd` - http simple auth password
- + `port` - http server listening port (default 8080)
- + `files` - http server static files path (default configFilePath/static)
+ + `web-port-num` - http server listening port (default 8080) (don't forget to open it in firewall!)
 2. **gameslist.json** - Optional. fill it with games. "SteamID":"Name", *Name - optional, all game titles takes from gifts page: you can leave it empty: "")* If no games loaded (profile + list) - bot stop
 3. **cookies.json** Required. You need to autorize in SG through browser, go to the DevTools in it and copy all cookies (I think only session cookie works, but anyway). "Name":"Value:Domain:Path" (separated by colon)
 If you widh parse giveaways that points to /sub/ steam pages with age check, you have to set these cookies:

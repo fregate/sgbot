@@ -82,6 +82,8 @@
     </div>
 
     <div class='tab-pane border border-top-0 rounded-bottom p-1' id='config' role='tabpanel' aria-labelledby='config-tab'>
+      <div class='list-group' id='config-div'>
+      </div>
       <p></p>
       <div class="alert alert-warning" role="alert">
         Config changes will apply only after manual bot restart!
@@ -247,7 +249,7 @@
         "<li class='list-group-item bg-light'> \
           <div class='d-flex flex-row'> \
             <span class='w-25 mr-3'> " + c + "</span> \
-            <div class='input-group' id='cookie-field-" + c.hashCode() + "'> \
+            <div class='input-group'> \
               <input type='text' class='form-control' placeholder='Cookie params' disabled id='edit-cookie-" + c.hashCode() + "' value='" + cookiesList[c] + "'> \
               <span class='input-group-append'> \
                 <button type='button' class='btn btn-warning' id='cookie-edit' data-cookie='" + c + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
@@ -327,9 +329,98 @@
     });
   });
 
+  function RenderConfig() {
+    $("#config-edit").off();
+    $("#button-edit-config-cancel").off();
+    $("#button-edit-config").off();
+    $('#config-div').empty();
+    var append = (name, value, parent) => {
+      $('#config-div').append(
+        "<li class='list-group-item bg-light'> \
+          <div class='d-flex flex-row'> \
+            <span class='w-25 mr-3'> " + name + "</span> \
+            <div class='input-group'> \
+              <input type='text' class='form-control' placeholder='Value' disabled id='edit-config-" + name.hashCode() + "' value='" + value + "'> \
+              <span class='input-group-append'> \
+                <button type='button' class='btn btn-warning' id='config-edit' data-name='" + name + "' data-parent='" + parent + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
+                <button hidden type='button' class='btn btn-success' id='button-edit-config' data-name='" + name + "' data-parent='" + parent + "'><i class='fas fa-edit' title='Edit'>&nbsp;</i></button> \
+                <button hidden type='button' class='btn btn-secondary' id='button-edit-config-cancel' data-name='" + name + "' data-parent='" + parent + "'><i class='fas fa-window-close' title='Cancel'>&nbsp;</i></button> \
+              </span> \
+            </div> \
+          </div> \
+        </li>"
+      );
+    }
+
+    for (const c in config) {
+      if (c == "mail") {
+        for (const m in config[c]) {
+          append(m, config[c][m], c);
+        }
+        continue;
+      }
+      append(c, config[c], "");
+    }
+
+    $("button#config-edit").click(function() {
+      const name = $(this).data('name');
+      $("#edit-config-" + name.hashCode()).attr("disabled", false);
+
+      $(this).attr("hidden", true);
+      $("#button-edit-config[data-name='" + name + "']").attr("hidden", false);
+      $("#button-edit-config-cancel[data-name='" + name + "']").attr("hidden", false);
+    });
+
+    $("button#button-edit-config-cancel").click(function() {
+      const name = $(this).data('name');
+      $(this).attr("hidden", true);
+      $("#config-edit[data-name='" + name + "']").attr("hidden", false);
+      $("#button-edit-config[data-name='" + name + "']").attr("hidden", true);
+      $("#edit-config-" + name.hashCode()).attr("disabled", true);
+      RenderConfig();
+    });
+
+    $("button#button-edit-config").click(function() {
+      const name = $(this).data('name');
+      const p = $(this).data('parent');
+      var value = $("#edit-config-" + name.hashCode()).val();
+      if (name.includes("-num")) {
+        value = parseInt(value);
+      }
+      if (p != undefined && p != "") {
+        config[p][name] = value;
+      } else {
+        config[name] = value;
+      }
+      RenderConfig();
+    });
+  }
+
+  // attach to cookies list buttons
+  $('#save-config').click(function() {
+    var button = this;
+    $(button).attr('disabled', true);
+    fetch('/saveconfig', {
+      method: 'post',
+      body: JSON.stringify(config),
+    })
+    .then(async function (response) {
+      $(button).attr('disabled', false);
+      if (response.ok) {
+        $("#config-success-alert").attr("hidden", false);
+      } else {
+        $("#config-error-alert").attr("hidden", false);
+      }
+    }).catch(function (err) {
+      $(button).attr('disabled', false);
+      $("#config-error-alert").attr("hidden", false);
+      console.error('Something went wrong.', err);
+    });
+  });
+
   RenderGamesList();
   RenderCookiesList();
-  // RenderConfig();
+  RenderConfig();
 </script>
 </body>
 </html>

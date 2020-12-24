@@ -22,7 +22,7 @@ type ServeConfig struct {
 	HTTPAuthLogin  string  `json:"httpauth"`
 	HTTPAuthPwd    string  `json:"httppwd"`
 
-	ListenPort   uint16  `json:"port"`
+	ListenPort   uint16  `json:"web-port-num"`
 	StaticFiles  string  `json:"files"`
 }
 
@@ -151,6 +151,12 @@ func (w *WebConfig) Serve() (err error) {
 			return
 		}
 
+		config, err := ioutil.ReadFile(w.configFileName)
+		if err != nil {
+			http.Error(writer, fmt.Sprint("Error reading games list file {}", err), http.StatusInternalServerError)
+			return
+		}
+
 		tmpl, _ := template.New("layout").Parse(indexTemplate)
 		data := struct {
 			GamesList string
@@ -158,7 +164,7 @@ func (w *WebConfig) Serve() (err error) {
 			Config string
 		} {
 			GamesList: string(games),
-			Config: `{ "profile" : "fregate" }`,
+			Config: string(config),
 			CookiesList: string(cookies),
 		}
 		tmpl.ExecuteTemplate(writer, "layout", data)
