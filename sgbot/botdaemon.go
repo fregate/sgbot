@@ -111,7 +111,7 @@ func startBot(srv *Service) {
 	}()
 
 	configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs := configFileName, cookiesFileName, listsFileName
-	if os.Args[1] == "test" {
+	if len(os.Args) > 1 && os.Args[1] == "test" {
 		configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs = path.Base(configFileName), path.Base(cookiesFileName), path.Base(listsFileName)
 	}
 
@@ -133,7 +133,7 @@ func startBot(srv *Service) {
 	}
 
 	for {
-		count, err := 1, error(nil) // srv.bot.Check()
+		count, err := srv.bot.Check()
 		if err != nil {
 			errlog.Println("error during check.", err)
 			srv.bot.SendPanicMsg(fmt.Sprintf("error during check.\n%v", err))

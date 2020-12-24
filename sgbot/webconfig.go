@@ -43,6 +43,7 @@ type WebConfig struct {
 // InitWebConfig reads configuration file for web application
 // fill structures
 func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err error) {
+	stdlog.Println("init web application")
 	if _, err = os.Stat(configFile); os.IsNotExist(err) {
 		f, err := os.Open(configFile)
 		if err != nil {
@@ -124,6 +125,7 @@ func handleFileSave(writer http.ResponseWriter, req *auth.AuthenticatedRequest, 
 
 // Serve runs http service on configured port
 func (w *WebConfig) Serve() (err error) {
+	stdlog.Println("serve")
 	authenticator := auth.NewBasicAuthenticator("Enter login and password", func(user, realm string) string {
 		if user == w.serveConfig.HTTPAuthLogin {
 			hashedPassword, err := bcrypt.GenerateFromPassword([]byte(w.serveConfig.HTTPAuthPwd), bcrypt.DefaultCost)
