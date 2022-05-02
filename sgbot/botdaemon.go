@@ -5,40 +5,139 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
-	"path"
 
 	"github.com/takama/daemon"
+	gomail "gopkg.in/gomail.v2"
 )
 
-const (
-	cookiesFileName string = "/home/ubuntu/.config/sgbot/cookies.json"
-	listsFileName   string = "/home/ubuntu/.config/sgbot/gameslist.json"
-	configFileName  string = "/home/ubuntu/.config/sgbot/config.json"
-)
+//go:generate python3 pathes.py pathes.go
 
 const (
 	// name of the service
 	serviceName        = "sgbotservice"
 	serviceDescription = "SteamGifts Bot Service"
-
-	// port which daemon should be listen
-	servicePort = ":9977"
 )
 
 // Service has embedded daemon
 type Service struct {
 	daemon.Daemon
 
-	bot *TheBot
+	bot    *TheBot
 	server *WebConfig
+
+	config             Configuration
+	lastTimeDigestSent time.Time
 }
 
-//	dependencies that are NOT required by the service, but might be used
-var dependencies = []string{"dummy.service"}
-
 var stdlog, errlog *log.Logger
+
+func (s *Service) readGameLists() (games map[uint64]struct{}, err error) {
+	games = make(map[uint64]struct{})
+
+	var ccc interface{}
+	err = ReadConfig(listsFileName, &ccc)
+	if err == nil {
+		m := ccc.(map[string]interface{})
+		for k := range m {
+			q, err := strconv.ParseUint(k, 10, 32)
+			if err != nil {
+				break
+			}
+			games[q] = struct{}{}
+		}
+	} else {
+		stdlog.Println(err)
+	}
+
+	stdlog.Printf("successfully load external games list [total entries:%d]\n", len(games))
+	return
+}
+
+// Check - check page and enter for gifts (repeat by timeout)
+func (s *Service) Check(b *TheBot, digest []string) (count int, err error) {
+	stdlog.Println("bot checking...")
+
+	defer b.clean()
+
+	games, err := s.readGameLists()
+	if err != nil {
+		return
+	}
+
+	cookies, err := ReadCookies(cookiesFileName)
+	if err != nil {
+		return
+	}
+
+	b.setCookies(cookies)
+
+	err = b.getUserInfo()
+	if err != nil {
+		return
+	}
+
+	// parse main page
+	defer stdlog.Println("bot check finished")
+
+	// parse main page
+	return b.parseGiveaways(games)
+}
+
+// SendPanicMsg sends msg (usually error and stops service) + current digest
+func (s *Service) SendPanicMsg(msg string, digest []string) {
+	if s.config.SendDigest {
+		msg = msg + "\n\n" + strings.Join(digest, "\n")
+	}
+
+	s.sendMail("Panic Message!", msg)
+}
+
+func (s *Service) sendDigest(digest []string) bool {
+	if !s.config.SendDigest {
+		return true
+	}
+
+	if time.Now().Hour() == 0 || time.Since(s.lastTimeDigestSent) > time.Hour*24 {
+		stdlog.Println("sending digest")
+		s.sendMail("Daily digest", strings.Join(digest, "\n"))
+		s.lastTimeDigestSent = time.Now()
+
+		return true
+	}
+
+	return false
+}
+
+// send digest
+func (s *Service) sendMail(subject, msg string) (err error) {
+	if msg == "" || !s.config.MailSettings.isValid() {
+		return nil
+	}
+
+	mailer := gomail.NewDialer(
+		s.config.MailSettings.SMTPServer,
+		s.config.MailSettings.Port,
+		s.config.MailSettings.SMTPUsername,
+		s.config.MailSettings.SMTPUserpassword)
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", s.config.MailSettings.SMTPUsername)
+	m.SetHeader("To", s.config.MailSettings.EmailRecipient)
+	m.SetHeader("Subject", fmt.Sprintf("%s %s", s.config.MailSettings.EmailSubjectTag, subject))
+	m.SetBody("text/plain", msg)
+
+	err = mailer.DialAndSend(m)
+	if err != nil {
+		errlog.Println(err)
+	}
+
+	return
+}
 
 // Manage by daemon commands or run the daemon
 func (service *Service) Manage() (string, error) {
@@ -63,7 +162,6 @@ func (service *Service) Manage() (string, error) {
 		}
 	}
 
-	// Do something, call your goroutines, etc
 	go startBot(service)
 
 	// Set up channel on which to send signal notifications.
@@ -80,11 +178,7 @@ func (service *Service) Manage() (string, error) {
 		//			go handleClient(conn)
 		case killSignal := <-interrupt:
 			stdlog.Println("Got signal:", killSignal)
-			//stdlog.Println("Stoping listening on ", listener.Addr())
-			//listener.Close()
-			if service.bot != nil {
-				service.bot.SendPanicMsg("Daemon was interruped by system signal")
-			}
+			service.SendPanicMsg("Daemon was interruped by system signal", make([]string, 0))
 			if killSignal == os.Interrupt {
 				return "Daemon was interruped by system signal", nil
 			}
@@ -110,13 +204,8 @@ func startBot(srv *Service) {
 		}
 	}()
 
-	configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs := configFileName, cookiesFileName, listsFileName
-	if len(os.Args) > 1 && os.Args[1] == "test" {
-		configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs = path.Base(configFileName), path.Base(cookiesFileName), path.Base(listsFileName)
-	}
-
 	srv.server = &WebConfig{}
-	err := srv.server.InitWebConfig(configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs)
+	err := srv.server.InitWebConfig(configFileName, cookiesFileName, listsFileName)
 	if err != nil {
 		stdlog.Println("error while initialize web app.", err)
 	} else {
@@ -124,38 +213,94 @@ func startBot(srv *Service) {
 	}
 
 	srv.bot = &TheBot{}
-
-	err = srv.bot.InitBot(configFileNameArgs, cookiesFileNameArgs, listsFileNameArgs)
+	err = srv.bot.InitBot(srv.config.SteamProfile)
 	if err != nil {
 		errlog.Println("error while initialize bot.", err)
-		srv.bot.SendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err))
+		srv.SendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err), make([]string, 0))
 		return
 	}
 
+	digest := make([]string, 0)
 	for {
-		count, err := srv.bot.Check()
+		count, err := srv.Check(srv.bot, digest)
 		if err != nil {
 			errlog.Println("error during check.", err)
-			srv.bot.SendPanicMsg(fmt.Sprintf("error during check.\n%v", err))
+			srv.SendPanicMsg(fmt.Sprintf("error during check.\n%v", err), digest)
 			break
 		}
 		stdlog.Println("wait for", (count+1)*60, "mins")
+		digest = append(digest, srv.bot.enteredGiveAways...)
+		srv.bot.enteredGiveAways = make([]string, 0)
+		if srv.sendDigest(digest) {
+			digest = make([]string, 0)
+		}
 		time.Sleep(time.Hour * time.Duration(count+1))
 	}
 }
 
+func runTest(config *Configuration) {
+	lastDigest := time.Now()
+	if len(os.Args) >= 3 {
+		milli, err := strconv.ParseInt(os.Args[2], 10, 64)
+		if err == nil {
+			lastDigest = time.UnixMilli(milli)
+		}
+	}
+	startBot(&Service{nil, nil, nil, *config, lastDigest})
+}
+
 func main() {
+	if _, err := os.Stat(configFileName); os.IsNotExist(err) {
+		f, err := os.Open(configFileName)
+		if err != nil {
+			errlog.Println("Error: ", err)
+			os.Exit(1)
+		}
+		f.Close()
+	}
+
+	if _, err := os.Stat(cookiesFileName); os.IsNotExist(err) {
+		f, err := os.Open(cookiesFileName)
+		if err != nil {
+			errlog.Println("Error: ", err)
+			os.Exit(1)
+		}
+		f.Close()
+	}
+
+	if _, err := os.Stat(listsFileName); os.IsNotExist(err) {
+		f, err := os.Open(listsFileName)
+		if err != nil {
+			errlog.Println("Error: ", err)
+			os.Exit(1)
+		}
+		f.Close()
+	}
+
+	// read steam profile, mail-smtp settings, web config settings
+	config, err := ReadConfiguration(configFileName)
+	if err != nil {
+		errlog.Println("Invalid configureation file\nError: ", err)
+		os.Exit(1)
+	}
+
 	if len(os.Args) > 1 && os.Args[1] == "test" {
-		startBot(&Service{nil, nil, nil})
+		runTest(&config)
 		return
 	}
 
-	srv, err := daemon.New(serviceName, serviceDescription, daemon.SystemDaemon)
+	daemonType := daemon.SystemDaemon
+	if runtime.GOOS == "darwin" {
+		daemonType = daemon.UserAgent
+	}
+
+	srv, err := daemon.New(serviceName, serviceDescription, daemonType)
 	if err != nil {
 		errlog.Println("Error: ", err)
 		os.Exit(1)
 	}
-	service := &Service{srv, nil, nil}
+
+	service := &Service{srv, nil, nil, config, time.Now()}
 	status, err := service.Manage()
 	if err != nil {
 		errlog.Println(status, "\nError: ", err)
