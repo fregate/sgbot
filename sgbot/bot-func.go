@@ -46,30 +46,13 @@ func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
 		return
 	}
 
-	// parse main page
 	defer fmt.Println("bot check finished")
 
-	// parse main page
 	_, err = b.parseGiveaways(games)
 	return b.enteredGiveAways, err
 }
 
 func RunBot(botRequest *Request) (digest []string, err error) {
-	// body, err := ioutil.ReadAll(request.Body)
-	// if err != nil {
-	// 	io.WriteString(rw, fmt.Sprintf("error during request reading.", err))
-	// 	rw.WriteHeader(http.StatusBadRequest)
-	// 	return
-	// }
-
-	// botRequest := &Request{}
-	// err = json.Unmarshal(body, &botRequest)
-	// if err != nil {
-	// 	io.WriteString(rw, fmt.Sprintf("error during request parse. %v", err))
-	// 	rw.WriteHeader(http.StatusBadRequest)
-	// 	return
-	// }
-
 	bot := &TheBot{}
 	err = bot.InitBot(botRequest.SteamProfile)
 	if err != nil {
