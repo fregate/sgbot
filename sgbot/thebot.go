@@ -116,7 +116,7 @@ type TheBot struct {
 
 	steamProfile string
 
-	gamesWhitelist map[uint64]struct{}
+	gamesWhitelist map[uint64]bool
 	gamesWon       []uint64
 
 	// page cache
@@ -136,7 +136,7 @@ func (b *TheBot) InitBot(steamProfile string) error {
 	b.clean()
 
 	b.steamProfile = steamProfile
-	b.gamesWhitelist = make(map[uint64]struct{})
+	b.gamesWhitelist = make(map[uint64]bool)
 	b.enteredGiveAways = make([]string, 0)
 
 	jar, err := cookiejar.New(&cookiejar.Options{})
@@ -174,7 +174,7 @@ func (b *TheBot) getSteamLists() (err error) {
 					stdlog.Println("wishlist entries", len(ww))
 					for arridx := range ww {
 						id := uint64(ww[arridx].AppID)
-						b.gamesWhitelist[id] = struct{}{}
+						b.gamesWhitelist[id] = true
 					}
 				} else {
 					stdlog.Println(err)
@@ -188,7 +188,7 @@ func (b *TheBot) getSteamLists() (err error) {
 	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
 		id, _ := s.Attr("data-appid")
 		numID, _ := strconv.ParseUint(id, 10, 64)
-		b.gamesWhitelist[numID] = struct{}{}
+		b.gamesWhitelist[numID] = true
 	})
 
 	stdlog.Println("steam profile parsed successfully")
@@ -372,10 +372,10 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 	return result, nil
 }
 
-func (b *TheBot) enterGiveaway(g GiveAway) (status bool, err error) {
+func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
 	params := url.Values{}
 	params.Add("xsrf_token", b.token)
-	params.Add("code", g.SGID)
+	params.Add("code", game.SGID)
 	params.Add("do", "entry_insert")
 
 	return b.postRequest("/ajax.php", params)
@@ -485,13 +485,13 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 	By(sec).sortGAs(giveaways)
 
 	timeNow := time.Now().Add(period)
-	for _, g := range giveaways {
-		if g.Time.After(timeNow) {
-			stdlog.Println("enough parsing", g)
+	for _, game := range giveaways {
+		if game.Time.After(timeNow) {
+			stdlog.Println("enough parsing", game)
 			break
 		}
 
-		status, err := b.getGiveawayStatus(g.URL)
+		status, err := b.getGiveawayStatus(game.URL)
 		if err != nil {
 			stdlog.Println(err)
 			if !status { // not enough points
@@ -505,35 +505,34 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 
 		// add some human behaviour - pause bot for a few seconds (3-6)
 		d := time.Second * time.Duration(rand.Intn(3)+3)
-		if g.Time.After(time.Now().Add(d)) {
+		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
-		status, err = b.enterGiveaway(g)
+		status, err = b.enterGiveaway(game)
 		if err != nil {
-			stdlog.Printf("internal error (%s) when enter for [%+v]", err, g)
+			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
 		}
 		if !status {
-			stdlog.Printf("external error when enter for [%+v]. wait\n", g)
+			stdlog.Printf("external error when enter for [%+v]. wait\n", game)
 			count = count + 1
 			break
 		}
-		var timeDesc string
-		duration := g.Time.Sub(time.Now())
+		duration := game.Time.Sub(time.Now())
+		timeDesc := fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
 		if duration.Minutes() < 60 {
 			timeDesc = fmt.Sprintf("Draw in %.f minutes", duration.Minutes())
-		} else {
-			timeDesc = fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
 		}
-		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), g.GID, g.Name, timeDesc))
+
+		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), game.GID, game.Name, timeDesc))
 		entries = entries + 1
 	}
 
 	return count, entries
 }
 
-func (b *TheBot) parseGiveaways(externalGamesList map[uint64]struct{}) (count int, err error) {
+func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, err error) {
 	b.gamesWhitelist = externalGamesList
 	err = b.getSteamLists()
 	if err != nil {

@@ -36,8 +36,8 @@ type Service struct {
 
 var stdlog, errlog *log.Logger
 
-func (s *Service) readGameLists() (games map[uint64]struct{}, err error) {
-	games = make(map[uint64]struct{})
+func (s *Service) readGameLists() (games map[uint64]bool, err error) {
+	games = make(map[uint64]bool)
 
 	var ccc interface{}
 	err = ReadConfig(listsFileName, &ccc)
@@ -48,7 +48,7 @@ func (s *Service) readGameLists() (games map[uint64]struct{}, err error) {
 			if err != nil {
 				break
 			}
-			games[q] = struct{}{}
+			games[q] = true
 		}
 	} else {
 		stdlog.Println(err)
@@ -59,7 +59,7 @@ func (s *Service) readGameLists() (games map[uint64]struct{}, err error) {
 }
 
 // Check - check page and enter for gifts (repeat by timeout)
-func (s *Service) Check(b *TheBot, digest []string) (count int, err error) {
+func (s *Service) check(b *TheBot, digest []string) (count int, err error) {
 	stdlog.Println("bot checking...")
 
 	defer b.clean()
@@ -88,8 +88,8 @@ func (s *Service) Check(b *TheBot, digest []string) (count int, err error) {
 	return b.parseGiveaways(games)
 }
 
-// SendPanicMsg sends msg (usually error and stops service) + current digest
-func (s *Service) SendPanicMsg(msg string, digest []string) {
+// sendPanicMsg sends msg (usually error and stops service) + current digest
+func (s *Service) sendPanicMsg(msg string, digest []string) {
 	if s.config.SendDigest {
 		msg = msg + "\n\n" + strings.Join(digest, "\n")
 	}
@@ -140,7 +140,7 @@ func (s *Service) sendMail(subject, msg string) (err error) {
 }
 
 // Manage by daemon commands or run the daemon
-func (service *Service) Manage() (string, error) {
+func (service *Service) manage() (string, error) {
 	usage := "Usage: myservice install | remove | start | stop | status"
 
 	// if received any kind of command, do it
@@ -178,7 +178,7 @@ func (service *Service) Manage() (string, error) {
 		//			go handleClient(conn)
 		case killSignal := <-interrupt:
 			stdlog.Println("Got signal:", killSignal)
-			service.SendPanicMsg("Daemon was interruped by system signal", make([]string, 0))
+			service.sendPanicMsg("Daemon was interruped by system signal", make([]string, 0))
 			if killSignal == os.Interrupt {
 				return "Daemon was interruped by system signal", nil
 			}
@@ -216,16 +216,16 @@ func startBot(srv *Service) {
 	err = srv.bot.InitBot(srv.config.SteamProfile)
 	if err != nil {
 		errlog.Println("error while initialize bot.", err)
-		srv.SendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err), make([]string, 0))
+		srv.sendPanicMsg(fmt.Sprintf("error while initialize bot.\n%v", err), make([]string, 0))
 		return
 	}
 
 	digest := make([]string, 0)
 	for {
-		count, err := srv.Check(srv.bot, digest)
+		count, err := srv.check(srv.bot, digest)
 		if err != nil {
 			errlog.Println("error during check.", err)
-			srv.SendPanicMsg(fmt.Sprintf("error during check.\n%v", err), digest)
+			srv.sendPanicMsg(fmt.Sprintf("error during check.\n%v", err), digest)
 			break
 		}
 		stdlog.Println("wait for", (count+1)*60, "mins")
@@ -301,7 +301,7 @@ func main() {
 	}
 
 	service := &Service{srv, nil, nil, config, time.Now()}
-	status, err := service.Manage()
+	status, err := service.manage()
 	if err != nil {
 		errlog.Println(status, "\nError: ", err)
 		os.Exit(1)
