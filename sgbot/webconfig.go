@@ -1,13 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"html/template"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"path"
-	"fmt"
-	"net/http"
-	"html/template"
-	"errors"
-	"io/ioutil"
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
@@ -19,11 +19,11 @@ import (
 
 // ServeConfig holds web application settings
 type ServeConfig struct {
-	HTTPAuthLogin  string  `json:"httpauth"`
-	HTTPAuthPwd    string  `json:"httppwd"`
+	HTTPAuthLogin string `json:"httpauth"`
+	HTTPAuthPwd   string `json:"httppwd"`
 
-	ListenPort   uint16  `json:"web-port-num"`
-	StaticFiles  string  `json:"files"`
+	ListenPort  uint16 `json:"web-port-num"`
+	StaticFiles string `json:"files"`
 }
 
 func (c ServeConfig) isWebConfigValid() bool {
@@ -79,7 +79,7 @@ func (w *WebConfig) InitWebConfig(configFile, cookieFile, listFile string) (err 
 
 		if !w.serveConfig.isWebConfigValid() {
 			stdlog.Println("No WebConfig settings. No WebUI")
-			return errors.New("Invalid web application settings")
+			return errors.New("invalid web application settings")
 		}
 
 		if w.serveConfig.StaticFiles == "" {
@@ -161,12 +161,12 @@ func (w *WebConfig) Serve() (err error) {
 
 		tmpl, _ := template.New("layout").Parse(indexTemplate)
 		data := struct {
-			GamesList string
+			GamesList   string
 			CookiesList string
-			Config string
-		} {
-			GamesList: string(games),
-			Config: string(config),
+			Config      string
+		}{
+			GamesList:   string(games),
+			Config:      string(config),
 			CookiesList: string(cookies),
 		}
 		tmpl.ExecuteTemplate(writer, "layout", data)
@@ -209,7 +209,7 @@ func (w *WebConfig) Serve() (err error) {
 
 		var response string
 		parts := strings.Split(string(body), "/")
-		for i := len(parts)-1; i >= 0; i-- {
+		for i := len(parts) - 1; i >= 0; i-- {
 			if len(parts[i]) == 0 {
 				continue
 			}

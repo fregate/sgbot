@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
@@ -15,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	gomail "gopkg.in/gomail.v2"
-
 	"github.com/PuerkitoBio/goquery"
 )
+
+var stdlog, errlog *log.Logger
 
 // BotError Description of BOT error
 type BotError struct {
@@ -108,157 +110,55 @@ const (
 
 // TheBot class for work with SteamGifts pages
 type TheBot struct {
-	userName string
-	token    string
-	points   int
-	baseURL  *url.URL
+	token string
 
 	// http client
-	client                  *http.Client
-	cookies                 []*http.Cookie
-	cookiesFileModifiedTime time.Time
+	client  *http.Client
+	cookies []*http.Cookie
+	// TODO move to botdaemon
+	// cookiesFileModifiedTime time.Time
 
-	botConfig         Configuration
-	dialer            *gomail.Dialer
-	gamesListFileName string
-	configFileName    string
-	cookiesFileName   string
+	steamProfile string
 
-	gamesWhitelist map[uint64]struct{}
+	gamesWhitelist map[uint64]bool
 	gamesWon       []uint64
 
 	// page cache
 	currentDocument *goquery.Document
 	currentURL      string
 
-	// digest
-	digestMsgs         []string
-	lastTimeDigestSent time.Time
+	enteredGiveAways []string
 }
 
 func (b *TheBot) clean() {
-	b.userName = ""
 	b.token = ""
 	b.currentURL = ""
 }
 
-func (b *TheBot) createClient() error {
-	fi, err := os.Stat(b.cookiesFileName)
-	if err != nil {
-		return err
-	}
+// InitBot initilize bot fields, load configs
+func (b *TheBot) InitBot(steamProfile string) error {
+	b.clean()
 
-	if b.cookiesFileModifiedTime.After(fi.ModTime()) {
-		return nil
-	}
+	b.steamProfile = steamProfile
+	b.gamesWhitelist = make(map[uint64]bool)
+	b.enteredGiveAways = make([]string, 0)
 
-	b.cookies, err = ReadCookies(b.cookiesFileName)
 	jar, err := cookiejar.New(&cookiejar.Options{})
 	if err != nil {
 		return err
 	}
 
 	b.client = &http.Client{Jar: jar}
-
-	b.cookiesFileModifiedTime = fi.ModTime()
 	return nil
-}
-
-// InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(configFile, cookieFile, listFile string) (err error) {
-	// init bot class default fields
-	b.clean()
-
-	b.baseURL, err = url.Parse(baseURL)
-
-	b.lastTimeDigestSent = time.Now()
-	b.digestMsgs = make([]string, 0)
-
-	b.gamesListFileName, b.cookiesFileName, b.configFileName = listFile, cookieFile, configFile
-
-	// read steam profile, parse wishlist and followed games (also read mail-smtp settings)
-	{
-		b.botConfig, err = ReadConfiguration(configFile)
-		if err != nil {
-			return
-		}
-
-		if b.botConfig.isMailValid() {
-			b.dialer = gomail.NewDialer(
-				b.botConfig.SMTPSettings.SMTPServer,
-				b.botConfig.SMTPSettings.Port,
-				b.botConfig.SMTPSettings.SMTPUsername,
-				b.botConfig.SMTPSettings.SMTPUserpassword)
-		}
-	}
-
-	return
-}
-
-func (b *TheBot) readGameLists(listFile string) (err error) {
-	b.gamesWhitelist = make(map[uint64]struct{})
-
-	if b.botConfig.SteamProfile != "" {
-		err = b.getSteamLists()
-		if err != nil {
-			stdlog.Println(err)
-		}
-	}
-
-	var ccc interface{}
-	err = ReadConfig(listFile, &ccc)
-	if err == nil {
-		m := ccc.(map[string]interface{})
-		for k := range m {
-			q, err := strconv.ParseUint(k, 10, 32)
-			if err != nil {
-				break
-			}
-			b.gamesWhitelist[q] = struct{}{}
-		}
-
-		if len(b.gamesWhitelist) == 0 {
-			stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
-			return &BotError{time.Now(), "no games to win"}
-		}
-	} else {
-		stdlog.Println(err)
-	}
-
-	stdlog.Printf("successfully load games list [total entries:%d]\n", len(b.gamesWhitelist))
-	return nil
-}
-
-// SendMail bot can send some mail (TODO need refactor!!!)
-func (b *TheBot) sendMail(subject, msg string) (err error) {
-	if b.dialer == nil {
-		return nil
-	}
-
-	if msg == "" {
-		return nil
-	}
-
-	m := gomail.NewMessage()
-	m.SetHeader("From", b.botConfig.SMTPSettings.SMTPUsername)
-	m.SetHeader("To", b.botConfig.EmailRecipient)
-	m.SetHeader("Subject", fmt.Sprintf("%s %s", b.botConfig.EmailSubjectTag, subject))
-	m.SetBody("text/plain", msg)
-
-	err = b.dialer.DialAndSend(m)
-	if err != nil {
-		errlog.Println(err)
-	}
-	return
 }
 
 func (b *TheBot) getSteamLists() (err error) {
-	if b.botConfig.SteamProfile == "" {
+	if b.steamProfile == "" {
 		return &BotError{time.Now(), "steam profile empty"}
 	}
 
 	// parse wish list entries
-	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.botConfig.SteamProfile + steamWishlist)
+	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamProfile + steamWishlist)
 	if err != nil {
 		stdlog.Println(err)
 	} else {
@@ -278,7 +178,7 @@ func (b *TheBot) getSteamLists() (err error) {
 					stdlog.Println("wishlist entries", len(ww))
 					for arridx := range ww {
 						id := uint64(ww[arridx].AppID)
-						b.gamesWhitelist[id] = struct{}{}
+						b.gamesWhitelist[id] = true
 					}
 				} else {
 					stdlog.Println(err)
@@ -288,24 +188,26 @@ func (b *TheBot) getSteamLists() (err error) {
 	}
 
 	// parse followed games entries
-	_, doc, err = b.getPageCustom(baseSteamProfileURL + b.botConfig.SteamProfile + steamFollowed)
-	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
+	_, doc, err = b.getPageCustom(baseSteamProfileURL + b.steamProfile + steamFollowed)
+	followed := doc.Find("div[data-appid]")
+	stdlog.Println("followed games entries", followed.Size())
+	followed.Each(func(_ int, s *goquery.Selection) {
 		id, _ := s.Attr("data-appid")
 		numID, _ := strconv.ParseUint(id, 10, 64)
-		b.gamesWhitelist[numID] = struct{}{}
+		b.gamesWhitelist[numID] = true
 	})
 
 	stdlog.Println("steam profile parsed successfully")
 	return nil
 }
 
-func (b *TheBot) postRequest(path string, params url.Values) (status bool, pts string, err error) {
-	pageURL, err := url.Parse(b.baseURL.String() + path)
+func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
+	pageURL, err := url.Parse(baseURL + path)
 	if err != nil {
 		return
 	}
 
-	req, err := http.NewRequest("POST", pageURL.String(), bytes.NewBufferString(params.Encode()))
+	req, err := http.NewRequest(http.MethodPost, pageURL.String(), bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return
 	}
@@ -330,7 +232,7 @@ func (b *TheBot) postRequest(path string, params url.Values) (status bool, pts s
 	r := postResponse{}
 	err = json.Unmarshal(answer, &r)
 
-	return r.Type == "success", r.Points, err
+	return r.Type == "success", err
 }
 
 func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
@@ -370,17 +272,20 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 }
 
 func (b *TheBot) getPage(path string) (err error) {
-	if b.currentURL == b.baseURL.String()+path {
+	if b.currentURL == baseURL+path {
 		return nil
 	}
 
-	b.currentURL, b.currentDocument, err = b.getPageCustom(b.baseURL.String() + path)
-
+	b.currentURL, b.currentDocument, err = b.getPageCustom(baseURL + path)
 	return err
 }
 
 func (b *TheBot) parseToken(str string) string {
 	return str[len(str)-32:]
+}
+
+func (b *TheBot) setCookies(cookies []*http.Cookie) {
+	b.cookies = cookies
 }
 
 func (b *TheBot) getUserInfo() (err error) {
@@ -389,28 +294,21 @@ func (b *TheBot) getUserInfo() (err error) {
 		return
 	}
 
-	//	doc := b.currentDocument.Find("html")
-	//	html, eee := doc.Html()
-	//	if eee != nil {
-	//		log.Fatal(err)
-	//	}
-	//	stdlog.Printf("[[[[%s]]]]", html)
-
-	b.userName = ""
 	b.token = ""
+	points := 0
 
-	b.userName, _ = b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
+	userName, _ := b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
 	ttt, res := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
-	if res == true {
+	if res {
 		b.token = b.parseToken(ttt)
-		b.points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+		points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
 	}
 
-	if b.userName == "" || b.token == "" {
+	if userName == "" || b.token == "" {
 		return &BotError{time.Now(), "no user information. please refresh cookies or parser"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d]\n", b.userName, b.points)
+	stdlog.Printf("receive info [user:%s][pts:%d]\n", userName, points)
 
 	b.gamesWon = make([]uint64, 0)
 	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
@@ -448,7 +346,7 @@ func (b *TheBot) checkWonList(gid uint64) bool {
 }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-	_, doc, err := b.getPageCustom(b.baseURL.String() + path)
+	_, doc, err := b.getPageCustom(baseURL + path)
 	if err != nil {
 		return true, err
 	}
@@ -480,10 +378,10 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 	return result, nil
 }
 
-func (b *TheBot) enterGiveaway(g GiveAway) (status bool, pts string, err error) {
+func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
 	params := url.Values{}
 	params.Add("xsrf_token", b.token)
-	params.Add("code", g.SGID)
+	params.Add("code", game.SGID)
 	params.Add("do", "entry_insert")
 
 	return b.postRequest("/ajax.php", params)
@@ -559,7 +457,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 			})
 		} else { // parse single game GA
 			// get steam game id and check it whitelisted
-			gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:len(x)], "/"), 10, 64)
+			gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:], "/"), 10, 64)
 			// stdlog.Println(gid)
 			_, ok := b.gamesWhitelist[gid]
 			if !ok {
@@ -582,25 +480,27 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 }
 
 func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (count, entries int) {
+	if len(giveaways) == 0 {
+		return
+	}
+
 	// sort giveaways by time asc
 	sec := func(t1, t2 *GiveAway) bool {
 		return t1.Time.UnixNano() < t2.Time.UnixNano()
 	}
 	By(sec).sortGAs(giveaways)
 
-	strpts := ""
 	timeNow := time.Now().Add(period)
-	for _, g := range giveaways {
-		if g.Time.After(timeNow) {
-			stdlog.Println("enough parsing", g)
+	for _, game := range giveaways {
+		if game.Time.After(timeNow) {
+			stdlog.Println("enough parsing", game)
 			break
 		}
 
-		status, err := b.getGiveawayStatus(g.URL)
+		status, err := b.getGiveawayStatus(game.URL)
 		if err != nil {
 			stdlog.Println(err)
 			if !status { // not enough points
-				count = count + 1
 				break
 			}
 		}
@@ -609,139 +509,77 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			continue
 		}
 
-		// add some human behaviour - pause bot for a few seconds (3-6)
-		d := time.Second * time.Duration(rand.Intn(3)+3)
-		if g.Time.After(time.Now().Add(d)) {
+		// add some human behaviour - pause bot for a few seconds (1-3)
+		d := time.Second * time.Duration(rand.Intn(1)+2)
+		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
-		status, strpts, err = b.enterGiveaway(g)
+		status, err = b.enterGiveaway(game)
 		if err != nil {
-			stdlog.Printf("internal error (%s) when enter for [%+v]", err, g)
+			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
 		}
 		if !status {
-			stdlog.Printf("external error when enter for [%+v]. wait\n", g)
+			stdlog.Printf("external error when enter for [%+v]. wait\n", game)
 			count = count + 1
 			break
 		}
-		var timeDesc string
-		duration := g.Time.Sub(time.Now())
+		duration := game.Time.Sub(time.Now())
+		timeDesc := fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
 		if duration.Minutes() < 60 {
 			timeDesc = fmt.Sprintf("Draw in %.f minutes", duration.Minutes())
-		} else {
-			timeDesc = fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
 		}
-		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), g.GID, g.Name, timeDesc))
-		b.points, _ = strconv.Atoi(strpts)
+
+		b.addDigest(fmt.Sprintf("%s. Apply for %d : %s. %s", time.Now().Format("15:04:05"), game.GID, game.Name, timeDesc))
 		entries = entries + 1
 	}
 
 	return count, entries
 }
 
-func (b *TheBot) parseGiveaways() (count int, err error) {
+func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, err error) {
+	b.gamesWhitelist = externalGamesList
+	err = b.getSteamLists()
+	if err != nil {
+		return
+	}
+
+	if len(b.gamesWhitelist) == 0 {
+		stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
+		return 0, errors.New("math: square root of negative number")
+	}
+
 	err = b.getPage("/")
 	if err != nil {
 		return
 	}
 
-	var entries int
-
-	// testContent, testErr := ioutil.ReadFile("page.html")
-	// if testErr != nil {
-	// 	return 0, testErr
-	// }
-	// bytesReader := bytes.NewReader(testContent)
-	// testDoc, testErr := goquery.NewDocumentFromReader(bytesReader)
-	// if testErr != nil {
-	// 	return 0, testErr
-	// }
-	// giveaways := b.getGiveaways(testDoc)
-	// count, entries = b.processGiveaways(giveaways, time.Hour)
-
 	stdlog.Println("check wishlist")
-	_, doc, err := b.getPageCustom(b.baseURL.String() + sgWishlistURL)
+	_, doc, err := b.getPageCustom(baseURL + sgWishlistURL)
 	if err != nil {
 		return 0, err
 	}
 	giveaways := b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	count, entries = b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
-	stdlog.Println("processed giveaways", entries)
+	count, entriesWishlist := b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
+	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
 	giveaways = b.getGiveaways(b.currentDocument)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	count, entries = b.processGiveaways(giveaways, time.Hour)
+	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
 
-	defer stdlog.Println("processed giveaways", entries)
+	defer stdlog.Println("processed giveaways", entriesWishlist+entriesMainPage)
 
 	return count, nil
 }
 
 func (b *TheBot) addDigest(msg string) {
-	if !b.botConfig.SendDigest {
-		return
-	}
-
-	b.digestMsgs = append(b.digestMsgs, msg)
+	b.enteredGiveAways = append(b.enteredGiveAways, msg)
 }
 
-func (b *TheBot) joinDigest() string {
-	if len(b.digestMsgs) == 0 {
-		return ""
-	}
-
-	return strings.Join(b.digestMsgs, "\n")
-}
-
-// SendPanicMsg sends msg (usually error and stops service) + current digest
-func (b *TheBot) SendPanicMsg(msg string) {
-	if b.botConfig.SendDigest {
-		msg = msg + "\n\n" + b.joinDigest()
-	}
-
-	b.sendMail("Panic Message!", msg)
-}
-
-func (b *TheBot) sendDigest() {
-	if !b.botConfig.SendDigest {
-		return
-	}
-
-	if time.Now().Hour() == 0 || time.Now().Sub(b.lastTimeDigestSent) > time.Hour*24 {
-		stdlog.Println("sending digest")
-		b.sendMail("Daily digest", b.joinDigest())
-		b.lastTimeDigestSent = time.Now()
-		b.digestMsgs = make([]string, 0)
-	}
-}
-
-// Check - check page and enter for gifts (repeat by timeout)
-func (b *TheBot) Check() (count int, err error) {
-	stdlog.Println("bot checking...")
-
-	defer b.clean()
-
-	err = b.createClient()
-	if err != nil {
-		return
-	}
-
-	err = b.readGameLists(b.gamesListFileName)
-	if err != nil {
-		return
-	}
-
-	err = b.getUserInfo()
-	if err != nil {
-		return
-	}
-
-	defer stdlog.Println("bot check finished")
-	defer b.sendDigest()
-
-	// parse main page
-	return b.parseGiveaways()
+func init() {
+	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 }
