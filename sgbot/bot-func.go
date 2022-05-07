@@ -14,10 +14,6 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
 )
 
-type Response struct {
-	StatusCode int `json:"statusCode"`
-}
-
 type Cookie struct {
 	Name   string `json:"name"`
 	Value  string `json:"value"`
