@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"runtime"
@@ -33,8 +32,6 @@ type Service struct {
 	config             Configuration
 	lastTimeDigestSent time.Time
 }
-
-var stdlog, errlog *log.Logger
 
 func (s *Service) readGameLists() (games map[uint64]bool, err error) {
 	games = make(map[uint64]bool)
@@ -188,11 +185,6 @@ func (service *Service) manage() (string, error) {
 
 	// never happen, but need to complete code
 	return usage, nil
-}
-
-func init() {
-	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
-	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 }
 
 func startBot(srv *Service) {

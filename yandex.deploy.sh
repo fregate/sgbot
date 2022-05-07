@@ -2,4 +2,5 @@
 
 cd sgbot
 
-zip ../func.zip bot-func.go thebot.go
+D=$(date '+%F_%H-%M-%S')
+zip ../func-$D.zip bot-func.go thebot.go go.mod

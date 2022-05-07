@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,8 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 )
+
+var stdlog, errlog *log.Logger
 
 // BotError Description of BOT error
 type BotError struct {
@@ -571,4 +575,9 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 
 func (b *TheBot) addDigest(msg string) {
 	b.enteredGiveAways = append(b.enteredGiveAways, msg)
+}
+
+func init() {
+	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
+	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 }
