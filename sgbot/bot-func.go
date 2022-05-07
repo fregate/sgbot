@@ -192,7 +192,41 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 		return nil, fmt.Errorf("bot error: %v", err)
 	}
 
-	// write digest to database (digest will send by another function by trigger)
+	if len(digest) > 0 {
+		fmt.Println("update digest")
+		err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
+			msgs := make([]types.Value, 0, len(digest))
+			for _, m := range digest {
+				msgs = append(msgs, types.StructValue(
+					types.StructFieldValue("msg", types.UTF8Value(m)),
+				))
+			}
+
+			txc := table.TxControl(
+				table.BeginTx(table.WithSerializableReadWrite()),
+				table.CommitTx(),
+			)
+
+			_, _, err = session.Execute(ctxSession, txc,
+				`--!syntax_v1
+				DECLARE $messages AS List<Struct<
+					msg: Utf8>>;
+
+				REPLACE INTO digest
+				SELECT msg AS message FROM AS_TABLE($messages);
+				`,
+				table.NewQueryParameters(table.ValueParam("$messages", types.ListValue(msgs...))),
+			)
+			if err != nil {
+				fmt.Println("can't insert into 'digest'", err)
+				return
+			}
+			return
+		})
+		if err != nil {
+			fmt.Println("error process 'digest'", err)
+		}
+	}
 
 	return &Response{
 		StatusCode: http.StatusOK,
