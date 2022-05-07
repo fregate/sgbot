@@ -189,7 +189,9 @@ func (b *TheBot) getSteamLists() (err error) {
 
 	// parse followed games entries
 	_, doc, err = b.getPageCustom(baseSteamProfileURL + b.steamProfile + steamFollowed)
-	doc.Find("div[data-appid]").Each(func(_ int, s *goquery.Selection) {
+	followed := doc.Find("div[data-appid]")
+	stdlog.Println("followed games entries", followed.Size())
+	followed.Each(func(_ int, s *goquery.Selection) {
 		id, _ := s.Attr("data-appid")
 		numID, _ := strconv.ParseUint(id, 10, 64)
 		b.gamesWhitelist[numID] = true
@@ -507,8 +509,8 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			continue
 		}
 
-		// add some human behaviour - pause bot for a few seconds (3-6)
-		d := time.Second * time.Duration(rand.Intn(3)+3)
+		// add some human behaviour - pause bot for a few seconds (1-3)
+		d := time.Second * time.Duration(rand.Intn(1)+2)
 		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}

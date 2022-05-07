@@ -11,6 +11,7 @@ import (
 	ycsdk "github.com/ydb-platform/ydb-go-sdk/v3"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table"
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/result/named"
+	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
 )
 
 type Response struct {
@@ -91,15 +92,16 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	if len(dbName) == 0 {
 		return nil, fmt.Errorf("no ydb database name")
 	}
-	// Determine timeout for connect or do nothing
-	connectCtx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
 
 	creds := yc.InstanceServiceAccount()
 	token, err := creds.IAMToken(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("can't get iam token. %v", err)
 	}
+
+	// Determine timeout for connect or do nothing
+	connectCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 
 	db, err := ycsdk.Open(
 		connectCtx,
@@ -109,30 +111,28 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ydb connect error: %w", err)
 	}
-	defer db.Close(connectCtx)
+	defer func() { _ = db.Close(connectCtx) }()
 
 	// get games, cookies from db
 	// make request suited for checking
-	r := &Request{}
+	var r Request
 	r.SteamProfile = os.Getenv("STEAM_PROFILE")
 
-	session, err := db.Table().CreateSession(connectCtx)
-	if err == nil {
+	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(
-			table.BeginTx(table.WithSerializableReadWrite()),
+			table.BeginTx(table.WithOnlineReadOnly()),
 			table.CommitTx(),
 		)
 
 		// read cookies
-		_, res, err := session.Execute(connectCtx, txc,
+		_, res, err := session.Execute(ctxSession, txc,
 			`--!syntax_v1
 			SELECT name, value, domain, path FROM cookies
-		`,
+			`,
 			nil,
 		)
-		defer res.Close()
 		if err == nil {
-			for res.NextResultSet(connectCtx) {
+			for res.NextResultSet(ctxSession) {
 				for res.NextRow() {
 					var c Cookie
 					err := res.ScanNamed(
@@ -144,20 +144,50 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 						fmt.Printf("error parsing cookie row. %v", err)
 						continue
 					}
-					fmt.Printf("adding cookie. %v", c)
 					r.Cookies = append(r.Cookies, c)
 				}
 			}
+			fmt.Println(len(r.Cookies), "cookies added")
+			res.Close()
 		} else {
-			fmt.Printf("can't fetch row. %v", err)
+			fmt.Printf("can't select from 'cookie' table. %v", err)
+			return
 		}
-	} else {
-		fmt.Printf("error creating session. %v", err)
-	}
-	defer session.Close(connectCtx)
 
-	fmt.Printf("request. profile: %s, cookies: %d, games: %d", r.SteamProfile, len(r.Cookies), len(r.Games))
-	_, err = RunBot(r)
+		// read games
+		_, res, err = session.Execute(ctxSession, txc,
+			`--!syntax_v1
+			SELECT id, name FROM games
+			`,
+			nil,
+		)
+		if err == nil {
+			for res.NextResultSet(ctxSession) {
+				for res.NextRow() {
+					var game Game
+					err := res.ScanNamed(
+						named.OptionalWithDefault("id", &game.Id),
+						named.OptionalWithDefault("name", &game.Name))
+					if err != nil {
+						fmt.Printf("error parsing game row. %v", err)
+						continue
+					}
+					r.Games = append(r.Games, game)
+				}
+			}
+			res.Close()
+			fmt.Println(len(r.Games), "games added")
+		} else {
+			fmt.Printf("can't select from 'game' table. %v", err)
+		}
+		return
+	})
+	if err != nil {
+		fmt.Println("can't read from db", err)
+	}
+
+	fmt.Println("request. profile:", r.SteamProfile)
+	digest, err := RunBot(&r)
 	if err != nil {
 		return nil, fmt.Errorf("bot error: %v", err)
 	}
