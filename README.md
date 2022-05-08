@@ -75,4 +75,3 @@ _(TODO: make one-timer function to create tables)_
 * http://gopkg.in/gomail.v2 - mailer for spam
 * https://github.com/yandex-cloud/go-sdk - using as cloud function
 * https://github.com/ydb-platform/ydb-go-sdk - store data for cloud function
-

@@ -56,7 +56,7 @@ func SendDigest(ctx context.Context) (*Response, error) {
 	}
 
 	// Determine timeout for connect or do nothing
-	connectCtx, cancel := context.WithTimeout(ctx, time.Second)
+	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	db, err := ycsdk.Open(
@@ -91,7 +91,7 @@ func SendDigest(ctx context.Context) (*Response, error) {
 					err := res.ScanNamed(
 						named.OptionalWithDefault("message", &msg))
 					if err != nil {
-						fmt.Printf("error parsing digest row. %v", err)
+						fmt.Println("error parsing digest row.", err)
 						continue
 					}
 					rows = append(rows, msg)
@@ -99,7 +99,7 @@ func SendDigest(ctx context.Context) (*Response, error) {
 			}
 			res.Close()
 		} else {
-			fmt.Printf("can't select from 'digest' table. %v", err)
+			fmt.Println("can't select from 'digest' table.")
 			return
 		}
 
@@ -111,14 +111,21 @@ func SendDigest(ctx context.Context) (*Response, error) {
 			nil,
 		)
 		if err != nil {
-			fmt.Printf("can't delete entries in 'digest'. %v", err)
+			fmt.Println("can't delete entries in 'digest'.")
 			return
 		}
 
 		return
 	})
 	if err != nil {
-		fmt.Println("can't read from db", err)
+		fmt.Println("can't perform operation on db.", err)
+	}
+
+	if len(rows) == 0 {
+		fmt.Println("nothing to send. exiting")
+		return &Response{
+			StatusCode: http.StatusOK,
+		}, nil
 	}
 
 	mailer, err := makeMailer()
