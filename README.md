@@ -46,8 +46,15 @@ Frankly, there is 2 cloud functions: bot who checks and email sender. And I not 
 
 ## Create DB for games, cookies and digest
 1. Create YandexDB (YDB) serverless database
-2. Create 3 tables: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:string)`
-_(TODO: make one-timer function to create tables)_
+2. Copy DB 'location'
+
+## Create bot init function
+1. Run `yandex.botinit-func.deploy.sh` - it prepares all mandatory files
+2. Create function from zip archive, choose Go/1.17, set 128M, 60sec timeout, set `bot-init-func.RunInitBotDB` as entry point
+3. Create service account with editor privelegies for YDB
+4. Set `STEAM_PROFILE` and `YDB_DATABASE` (this is location from YDB) environment variables
+5. Finish function creation
+6. Run function once (test). It has to create 3 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:UTF8)`
 
 ## Create bot function
 1. Run `yandex.bot-func.deploy.sh` - it prepares all mandatory files
