@@ -18,4 +18,10 @@ jobs:
         cd sgbot
         go get
         go generate
+        echo 'package main  
+          const (  
+            cookiesFileName string = "cookies.json"  
+            listsFileName   string = "gameslist.json"  
+            configFileName  string = "config.json"  
+          )' > pathes.go
         go build -v ./...
