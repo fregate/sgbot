@@ -9,7 +9,7 @@ This is my first project in GO (and there no some goish features like channels a
 This is python implementation which inspired me to do this
 https://github.com/theWaR13/SteamGiveawayManager
 
-# Preparations
+# Preparations for 'onpremise' installation
 1. **config.json** - bot config. Optional
  + `profile` - If you want to parse your steam profile. You need only name, not whole URL. Optional.
  + `mail` - set smtp settings for sends some notifications (optional)
@@ -41,8 +41,8 @@ If you wish parse giveaways that points to /sub/ steam pages with age check, you
   * profit!
 
 # SGBot as a cloud function
-If you have some cloud functions service (AWS Lambda, Yandex.Cloud) you could try to install this bot as cloud function. At this point you can install it on Yandex.Cloud (as did I).
-Frankly, there is 2 cloud functions: bot who checks and email sender. And I not implemented (yet?) spectacular and rich web-configuration script (because you can change cookies, games and other parameters directly inside cloud console).
+If you have some cloud functions service (AWS Lambda, Yandex.Cloud, _etc_) you could try to install this bot as cloud function. At this point you can install it on Yandex.Cloud (as I did).
+Frankly, there is 3 cloud functions: bot which checks, email sender and script with db seeding.
 
 ## Create DB for games, cookies and digest
 1. Create YandexDB (YDB) serverless database
@@ -54,7 +54,7 @@ Frankly, there is 2 cloud functions: bot who checks and email sender. And I not 
 3. Create service account with editor privelegies for YDB
 4. Set `STEAM_PROFILE` and `YDB_DATABASE` (this is location from YDB) environment variables
 5. Finish function creation
-6. Run function once (test). It has to create 3 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:UTF8)`
+6. Run function once (test). It has to create 3 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)` and `digest (message:UTF8)`
 
 ## Create bot function
 1. Run `yandex.bot-func.deploy.sh` - it prepares all mandatory files
@@ -64,7 +64,7 @@ Frankly, there is 2 cloud functions: bot who checks and email sender. And I not 
 5. Finish function creation
 6. Create trigger for schedule function invokation (hourly - but you can check as you wish)
 7. Create service account (or add to existing serverless.invoker role)
-8. It's have to work!
+8. It's has to work!
 
 ## Create digest function
 1. Run `yandex.digest-bot.deploy.sh` - it prepares all mandatory files
@@ -74,7 +74,7 @@ Frankly, there is 2 cloud functions: bot who checks and email sender. And I not 
 5. Finish function creation
 6. Create trigger for schedule function invokation (daily - but you can send as you wish)
 7. Create (select) service account with serverless.invoker role
-8. It's have to work!
+8. It's has to work!
 
 # External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
