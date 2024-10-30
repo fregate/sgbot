@@ -64,7 +64,7 @@ Frankly, there is 3 cloud functions: bot which checks, email sender and script w
 5. Finish function creation
 6. Create trigger for schedule function invokation (hourly - but you can check as you wish)
 7. Create service account (or add to existing serverless.invoker role)
-8. It's has to work!
+8. It has to work!
 
 ## Create digest function
 1. Run `yandex.digest-bot.deploy.sh` - it prepares all mandatory files
@@ -74,7 +74,7 @@ Frankly, there is 3 cloud functions: bot which checks, email sender and script w
 5. Finish function creation
 6. Create trigger for schedule function invokation (daily - but you can send as you wish)
 7. Create (select) service account with serverless.invoker role
-8. It's has to work!
+8. It has to work!
 
 # External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
