@@ -182,9 +182,6 @@ func (service *Service) manage() (string, error) {
 			return "Daemon was killed", nil
 		}
 	}
-
-	// never happen, but need to complete code
-	return usage, nil
 }
 
 func startBot(srv *Service) {

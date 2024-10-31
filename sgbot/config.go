@@ -4,12 +4,12 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"os"
 )
 
 // ReadConfig read from file (uri) settings
 func ReadConfig(uri string, c interface{}) (err error) {
-	raw, err := ioutil.ReadFile(uri)
+	raw, err := os.ReadFile(uri)
 
 	if err != nil {
 		return

@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -223,7 +224,7 @@ func (b *TheBot) postRequest(path string, params url.Values) (status bool, err e
 
 	defer resp.Body.Close()
 
-	answer, err := ioutil.ReadAll(resp.Body)
+	answer, err := io.ReadAll(resp.Body)
 	stdlog.Println("giveaway post request answer", string(answer))
 	if err != nil {
 		return
@@ -313,7 +314,8 @@ func (b *TheBot) getUserInfo() (err error) {
 	b.gamesWon = make([]uint64, 0)
 	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
 		b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
-			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 {
+			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 &&
+									s.Find("div.table__gift-feedback-not-received").Size() == 0 {
 				// steam id
 				steamid, _ := s.Find("a.table_image_thumbnail").First().Attr("style")
 				// background-image:url(https://steamcdn-a.akamaihd.net/steam/apps/265930/capsule_184x69.jpg); - [5]
@@ -389,7 +391,7 @@ func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
 
 func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 	doc.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
-		sgCode, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
+		sgCode, _ := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
 
 		game := s.Find("a.giveaway__heading__name").First().Text()
@@ -457,7 +459,13 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 			})
 		} else { // parse single game GA
 			// get steam game id and check it whitelisted
-			gid, _ := strconv.ParseUint(strings.Trim(x[strings.LastIndex(strings.Trim(x, "/"), "/")+1:], "/"), 10, 64)
+			re := regexp.MustCompile(`[0-9]+`)
+			strgid := re.FindAllString(x, -1)
+			if len(strgid) == 0 {
+				stdlog.Println("skip giveaway - can't find steam id", x)
+				return
+			}
+			gid, _ := strconv.ParseUint(strgid[0], 10, 64)
 			// stdlog.Println(gid)
 			_, ok := b.gamesWhitelist[gid]
 			if !ok {
@@ -510,7 +518,7 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		}
 
 		// add some human behaviour - pause bot for a few seconds (1-3)
-		d := time.Second * time.Duration(rand.Intn(1)+2)
+		d := time.Second * time.Duration(rand.Intn(3) + 1)
 		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
