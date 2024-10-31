@@ -390,6 +390,7 @@ func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
 }
 
 func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
+	re := regexp.MustCompile(`[0-9]+`)
 	doc.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
 		sgCode, _ := s.Find("a.giveaway__heading__name").First().Attr("href")
 		sgCode = strings.Split(sgCode, "/")[2]
@@ -459,7 +460,6 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 			})
 		} else { // parse single game GA
 			// get steam game id and check it whitelisted
-			re := regexp.MustCompile(`[0-9]+`)
 			strgid := re.FindAllString(x, -1)
 			if len(strgid) == 0 {
 				stdlog.Println("skip giveaway - can't find steam id", x)
