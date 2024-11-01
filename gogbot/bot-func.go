@@ -14,76 +14,29 @@ import (
 	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
 )
 
-type Cookie struct {
-	Name   string `json:"name"`
-	Value  string `json:"value"`
-	Domain string `json:"domain"`
-	Path   string `json:"path"`
-}
-
-type Game struct {
-	Name string `json:"name"`
-	Id   uint64 `json:"id"`
-}
-
-type Request struct {
-	SteamProfile string   `json:"profile"`
-	Cookies      []Cookie `json:"cookies"`
-	Games        []Game   `json:"games"`
-}
-
-func populateCookies(b *TheBot, botCookies []Cookie) {
-	cookies := make([]*http.Cookie, 0)
-	for _, c := range botCookies {
-		cookies = append(cookies, &http.Cookie{Name: c.Name, Value: c.Value, Domain: c.Domain, Path: c.Path})
-	}
-	b.setCookies(cookies)
-}
-
-func populateGames(games []Game) (mapped map[uint64]bool) {
-	mapped = make(map[uint64]bool)
-	for _, game := range games {
-		mapped[game.Id] = true
-	}
-	return
-}
-
-// Check - check page and enter for gifts (repeat by timeout)
-func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
-	err = b.getUserInfo()
-	if err != nil {
-		return
-	}
-
-	defer fmt.Println("bot check finished")
-
-	_, err = b.parseGiveaways(games)
-	return b.enteredGiveAways, err
-}
-
-func RunBot(botRequest *Request) (digest []string, err error) {
+func RunBot(cookies []*http.Cookie) (digest []string, err error) {
 	bot := &TheBot{}
-	err = bot.InitBot(botRequest.SteamProfile)
+	err = bot.initBot()
 	if err != nil {
 		fmt.Println("error during bot initialization.", err)
 		return
 	}
 
-	populateCookies(bot, botRequest.Cookies)
-	games := populateGames(botRequest.Games)
+	bot.setCookies(cookies)
 
-	digest, err = runCheck(bot, games)
+	digest, err = bot.claimGiveaway()
 	if err != nil {
 		fmt.Println("error during check.", err)
+	} else {
+		fmt.Println("gogbot check finished")
 	}
+
 	return
 }
 
 // Requirements for execution:
-// Set STEAM_PROFILE environment variable as your steam profile id (https://steamcommunity.com/id/<profile>/)
-// YDB connection:
 // Set YDB_DATABASE : a name for YDB (shown in yandex cloud console)
-func RunSGBOTFunc(ctx context.Context) (*Response, error) {
+func RunGOGBOTFunc(ctx context.Context) (*Response, error) {
 	dbName := os.Getenv("YDB_DATABASE")
 	if len(dbName) == 0 {
 		return nil, fmt.Errorf("no ydb database name")
@@ -107,13 +60,10 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ydb connect error: %w", err)
 	}
+
 	defer func() { _ = db.Close(connectCtx) }()
 
-	// get games, cookies from db
-	// make request suited for checking
-	var r Request
-	r.SteamProfile = os.Getenv("STEAM_PROFILE")
-
+	var cookies = make([]*http.Cookie, 0)
 	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(
 			table.BeginTx(table.WithOnlineReadOnly()),
@@ -123,14 +73,14 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 		// read cookies
 		_, res, err := session.Execute(ctxSession, txc,
 			`--!syntax_v1
-			SELECT name, value, domain, path FROM cookies WHERE domain LIKE "%steam%"
+			SELECT name, value, domain, path FROM cookies WHERE domain LIKE "%gog%"
 			`,
 			nil,
 		)
 		if err == nil {
 			for res.NextResultSet(ctxSession) {
 				for res.NextRow() {
-					var c Cookie
+					var c http.Cookie
 					err := res.ScanNamed(
 						named.OptionalWithDefault("name", &c.Name),
 						named.OptionalWithDefault("value", &c.Value),
@@ -140,50 +90,23 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 						fmt.Printf("error parsing cookie row. %v", err)
 						continue
 					}
-					r.Cookies = append(r.Cookies, c)
+					cookies = append(cookies, &c)
 				}
 			}
-			fmt.Println(len(r.Cookies), "cookies added")
+			fmt.Println(len(cookies), "cookies added")
 			res.Close()
 		} else {
-			fmt.Printf("can't select from 'cookie' table. %v", err)
+			fmt.Printf("Can't select from 'cookie' table. %v", err)
 			return
 		}
 
-		// read games
-		_, res, err = session.Execute(ctxSession, txc,
-			`--!syntax_v1
-			SELECT id, name FROM games
-			`,
-			nil,
-		)
-		if err == nil {
-			for res.NextResultSet(ctxSession) {
-				for res.NextRow() {
-					var game Game
-					err := res.ScanNamed(
-						named.OptionalWithDefault("id", &game.Id),
-						named.OptionalWithDefault("name", &game.Name))
-					if err != nil {
-						fmt.Printf("error parsing game row. %v", err)
-						continue
-					}
-					r.Games = append(r.Games, game)
-				}
-			}
-			res.Close()
-			fmt.Println(len(r.Games), "games added")
-		} else {
-			fmt.Printf("can't select from 'game' table. %v", err)
-		}
 		return
 	})
 	if err != nil {
-		fmt.Println("can't read from db", err)
+		fmt.Println("Can't read from db", err)
 	}
 
-	fmt.Println("request. profile:", r.SteamProfile)
-	digest, err := RunBot(&r)
+	digest, err := RunBot(cookies)
 	if err != nil {
 		return nil, fmt.Errorf("bot error: %v", err)
 	}
