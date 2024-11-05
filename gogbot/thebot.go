@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"time"
 )
 
 type pair struct {
@@ -74,17 +75,21 @@ func (b *TheBot) getPageCustom(uri string) (retCode int, err error) {
 func (b *TheBot) claimGiveaway() (digest []string, err error) {
 	code, err := b.getPageCustom(baseURL + claim)
 
+	if err != nil {
+		fmt.Println("GOGBOT: returned error:", err)
+		return
+	}
+
+	fmt.Println("GOGBOT: returned code:", code)
+
 	response := make([]string, 0)
 
 	switch code {
 	case http.StatusOK:
-		response = append(response, "GOGBOT: claimed something")
+		response = append(response, fmt.Sprintf("%s. GOGBOT: claimed something", time.Now().Format("15:04:05")))
 
 	case http.StatusUnauthorized:
-		response = append(response, "GOGBOT: unautorized")
-
-	default:
-		fmt.Println("GOGBOT: returned code:", code)
+		response = append(response, fmt.Sprintf("%s. GOGBOT: unautorized", time.Now().Format("15:04:05")))
 	}
 
 	return response, err
