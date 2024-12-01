@@ -86,6 +86,7 @@ func (b *TheBot) claimGiveaway() (digest []string, err error) {
 
 	switch code {
 	case http.StatusOK:
+	case http.StatusCreated:
 		response = append(response, fmt.Sprintf("%s. GOGBOT: claimed something", time.Now().Format("15:04:05")))
 
 	case http.StatusUnauthorized:
