@@ -217,13 +217,13 @@ func startBot(srv *Service) {
 			srv.sendPanicMsg(fmt.Sprintf("error during check.\n%v", err), digest)
 			break
 		}
-		stdlog.Println("wait for", (count+1)*60, "mins")
+		stdlog.Println("wait for", (count + 1) * 60, "mins")
 		digest = append(digest, srv.bot.enteredGiveAways...)
 		srv.bot.enteredGiveAways = make([]string, 0)
 		if srv.sendDigest(digest) {
 			digest = make([]string, 0)
 		}
-		time.Sleep(time.Hour * time.Duration(count+1))
+		time.Sleep(time.Hour * time.Duration(count + 1))
 	}
 }
 

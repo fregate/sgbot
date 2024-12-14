@@ -88,10 +88,10 @@ type pair struct {
 }
 
 var requestHeaders = []pair{
-	pair{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-	pair{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
-	pair{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
-	pair{name: "X-Requested-With", value: "XMLHttpRequest"},
+	{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
+	{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
+	{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
+	{name: "X-Requested-With", value: "XMLHttpRequest"},
 }
 
 type wginfo struct {
@@ -273,7 +273,7 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 }
 
 func (b *TheBot) getPage(path string) (err error) {
-	if b.currentURL == baseURL+path {
+	if b.currentURL == baseURL + path {
 		return nil
 	}
 
@@ -550,7 +550,7 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 	b.gamesWhitelist = externalGamesList
 	err = b.getSteamLists()
 	if err != nil {
-		return
+		return 0, err
 	}
 
 	if len(b.gamesWhitelist) == 0 {
@@ -560,7 +560,7 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 
 	err = b.getPage("/")
 	if err != nil {
-		return
+		return 0, err
 	}
 
 	stdlog.Println("check wishlist")
@@ -570,7 +570,7 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 	}
 	giveaways := b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	count, entriesWishlist := b.processGiveaways(giveaways, time.Hour*24*7*5) // 5 weeks - all
+	count, entriesWishlist := b.processGiveaways(giveaways, time.Hour * 24 * 7 * 5) // 5 weeks - all
 	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
@@ -578,7 +578,7 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
 
-	defer stdlog.Println("processed giveaways", entriesWishlist+entriesMainPage)
+	defer stdlog.Println("processed giveaways", entriesWishlist + entriesMainPage)
 
 	return count, nil
 }
