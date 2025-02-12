@@ -6,13 +6,16 @@ import (
 
 func TestBotFunc(t *testing.T) {
 	req := &Request{}
-	req.SteamProfile = "fregate"
+	req.SteamProfile = "" // steam profile ID (64 bit number)
+	req.SteamAPIKey = "" // steam API Key
 	req.Cookies = make([]Cookie, 0)
-	req.Cookies = append(req.Cookies, Cookie{Name: "PHPSESSID", Value: "o3q1ob2bl581foi7d08d0g1dtvm2d5m285vushdishe5pbgc", Domain: "www.steamgifts.com", Path: "/"})
+	req.Cookies = append(req.Cookies,
+		Cookie{Name: "PHPSESSID", Value: "<copy it from browser after sg login>", Domain: "www.steamgifts.com", Path: "/"},
+	)
 
 	digest, err := RunBot(req)
 	if err != nil {
-		t.Errorf("error during check")
+		t.Errorf("error during check: %v", err)
 	}
 
 	if len(digest) == 0 {
