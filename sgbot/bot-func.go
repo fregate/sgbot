@@ -114,6 +114,7 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	// make request suited for checking
 	var r Request
 	r.SteamProfile = os.Getenv("STEAM_PROFILE")
+	r.SteamAPIKey = os.Getenv("STEAM_API_KEY")
 
 	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(
