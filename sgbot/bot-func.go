@@ -28,6 +28,7 @@ type Game struct {
 
 type Request struct {
 	SteamProfile string   `json:"profile"`
+	SteamAPIKey  string   `json:"key"`
 	Cookies      []Cookie `json:"cookies"`
 	Games        []Game   `json:"games"`
 }
@@ -63,7 +64,7 @@ func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
 
 func RunBot(botRequest *Request) (digest []string, err error) {
 	bot := &TheBot{}
-	err = bot.InitBot(botRequest.SteamProfile)
+	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey)
 	if err != nil {
 		fmt.Println("error during bot initialization.", err)
 		return
@@ -113,6 +114,7 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	// make request suited for checking
 	var r Request
 	r.SteamProfile = os.Getenv("STEAM_PROFILE")
+	r.SteamAPIKey = os.Getenv("STEAM_API_KEY")
 
 	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(

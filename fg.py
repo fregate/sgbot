@@ -127,7 +127,7 @@ def main(argv) :
   session = HTMLSession()
   r = session.get(steamFollowedGamesPage.format(args.profile))
   
-  pattern = "\d{1,8}"
+  pattern = r'\d{1,8}'
   aaa = {}
   for ddd in r.html.find("div[class='gameListRowItemName']") :
       lll = ddd.find("a", first=True)

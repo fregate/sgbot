@@ -94,18 +94,11 @@ var requestHeaders = []pair{
 	{name: "X-Requested-With", value: "XMLHttpRequest"},
 }
 
-type wginfo struct {
-	AppID     int `json:"appid"`
-	Priority  int `json:"priority"`
-	DateAdded int `json:"added"`
-}
-
 const (
 	baseURL             string = "https://www.steamgifts.com"
 	sgWishlistURL       string = "/giveaways/search?type=wishlist"
 	sgAccountInfo       string = "/giveaways/won"
-	baseSteamProfileURL string = "https://steamcommunity.com/id/"
-	steamWishlist       string = "/wishlist/"
+	baseSteamProfileURL string = "https://steamcommunity.com/profiles/"
 	steamFollowed       string = "/followedgames/"
 )
 
@@ -119,7 +112,8 @@ type TheBot struct {
 	// TODO move to botdaemon
 	// cookiesFileModifiedTime time.Time
 
-	steamProfile string
+	steamID string
+	steamAPIKey string
 
 	gamesWhitelist map[uint64]bool
 	gamesWon       []uint64
@@ -137,10 +131,11 @@ func (b *TheBot) clean() {
 }
 
 // InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(steamProfile string) error {
+func (b *TheBot) InitBot(steamProfile string, apiKey string) error {
 	b.clean()
 
-	b.steamProfile = steamProfile
+	b.steamID = steamProfile
+	b.steamAPIKey = apiKey
 	b.gamesWhitelist = make(map[uint64]bool)
 	b.enteredGiveAways = make([]string, 0)
 
@@ -153,43 +148,71 @@ func (b *TheBot) InitBot(steamProfile string) error {
 	return nil
 }
 
+type GameInfo struct {
+	AppID     uint64 `json:"appid"`
+	Priority  int `json:"priority"`
+	DateAdded int `json:"added"`
+}
+
+type WishlistItems struct {
+	Items []GameInfo	`json:"items"`
+}
+
+type WishlistGames struct {
+	Resp WishlistItems	`json:"response"`
+}
+
+func fetchWishlist(steamID string, apiKey string) ([]GameInfo, error) {
+	url := fmt.Sprintf("https://api.steampowered.com/IWishlistService/GetWishlist/v1?id=%s&steamid=%s", apiKey, steamID)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed process request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
+	}
+
+	games := WishlistGames{}
+	err = json.Unmarshal(answer, &games)
+	if err != nil {
+		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
+	}
+
+	return games.Resp.Items, nil
+}
+
 func (b *TheBot) getSteamLists() (err error) {
-	if b.steamProfile == "" {
+	if b.steamID == "" {
 		return &BotError{time.Now(), "steam profile empty"}
 	}
 
 	// parse wish list entries
-	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamProfile + steamWishlist)
+	wg, err := fetchWishlist(b.steamID, b.steamAPIKey)
 	if err != nil {
-		stdlog.Println(err)
-	} else {
-		doc.Find("script").Each(func(_ int, s *goquery.Selection) {
-			if idx := strings.Index(s.Text(), "g_rgWishlistData"); idx >= 0 {
-				parseText := s.Text()[idx:]
-				idx = strings.Index(parseText, "[{")
-				idxEnd := strings.Index(parseText, "}];")
-				if idx < 0 || idxEnd < 0 {
-					stdlog.Println("parseText", parseText)
-					stdlog.Println("indeces", idx, idxEnd)
-					return
-				}
-				ww := []wginfo{}
-				err = json.Unmarshal([]byte(parseText[idx:idxEnd+2]), &ww)
-				if err == nil {
-					stdlog.Println("wishlist entries", len(ww))
-					for arridx := range ww {
-						id := uint64(ww[arridx].AppID)
-						b.gamesWhitelist[id] = true
-					}
-				} else {
-					stdlog.Println(err)
-				}
-			}
-		})
+		stdlog.Println("can't fetch steam wishlist", err)
+		return &BotError{time.Now(), "can't fetch steam wishlist"}
+	}
+
+	stdlog.Println("wishlist entries", len(wg))
+	for _, game := range wg {
+		b.gamesWhitelist[game.AppID] = true
 	}
 
 	// parse followed games entries
-	_, doc, err = b.getPageCustom(baseSteamProfileURL + b.steamProfile + steamFollowed)
+	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
+	if err != nil {
+		stdlog.Println("can't fetch followed games", err)
+		return &BotError{time.Now(), "can't fetch followed games"}
+	}
 	followed := doc.Find("div[data-appid]")
 	stdlog.Println("followed games entries", followed.Size())
 	followed.Each(func(_ int, s *goquery.Selection) {
@@ -225,10 +248,10 @@ func (b *TheBot) postRequest(path string, params url.Values) (status bool, err e
 	defer resp.Body.Close()
 
 	answer, err := io.ReadAll(resp.Body)
-	stdlog.Println("giveaway post request answer", string(answer))
 	if err != nil {
 		return
 	}
+	stdlog.Println("giveaway post request answer", string(answer))
 
 	r := postResponse{}
 	err = json.Unmarshal(answer, &r)
