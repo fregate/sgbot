@@ -186,13 +186,39 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 
 	fmt.Println("request. profile:", r.SteamProfile)
 	digest, err := RunBot(&r)
+
 	if err != nil {
+		db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err2 error) {
+			err_record := types.StructValue(types.StructFieldValue("msg", types.UTF8Value(err.Error())),)
+
+			txc := table.TxControl(
+				table.BeginTx(table.WithSerializableReadWrite()),
+				table.CommitTx(),
+			)
+
+			_, _, err2 = session.Execute(ctxSession, txc,
+				`--!syntax_v1
+				DECLARE $messages AS List<Struct<
+					msg: Utf8>>;
+
+				REPLACE INTO digest
+				SELECT msg AS message FROM AS_TABLE($messages);
+				`,
+				table.NewQueryParameters(table.ValueParam("$messages", types.ListValue(err_record))),
+			)
+			if err2 != nil {
+				fmt.Println("can't insert error into 'digest'", err2)
+				return
+			}
+			return
+		})
+
 		return nil, fmt.Errorf("bot error: %v", err)
 	}
 
 	if len(digest) > 0 {
 		fmt.Println("update digest")
-		err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
+		db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 			msgs := make([]types.Value, 0, len(digest))
 			for _, m := range digest {
 				msgs = append(msgs, types.StructValue(
@@ -221,9 +247,6 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 			}
 			return
 		})
-		if err != nil {
-			fmt.Println("error process 'digest'", err)
-		}
 	}
 
 	return &Response{

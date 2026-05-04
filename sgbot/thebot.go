@@ -282,6 +282,7 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 		req.AddCookie(k)
 	}
 
+	stdlog.Printf("getPageCustom. Cookies for %s : %d", pageURL.Host, len(b.cookies))
 	resp, err := b.client.Do(req)
 	if err != nil {
 		return
