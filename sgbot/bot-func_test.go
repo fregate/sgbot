@@ -10,7 +10,7 @@ func TestBotFunc(t *testing.T) {
 	req.SteamAPIKey = "" // steam API Key
 	req.Cookies = make([]Cookie, 0)
 	req.Cookies = append(req.Cookies,
-		Cookie{Name: "PHPSESSID", Value: "<copy it from browser after sg login>", Domain: "www.steamgifts.com", Path: "/"},
+		Cookie{Name: "PHPSESSID", Value: "", Domain: "www.steamgifts.com", Path: "/"},
 	)
 
 	digest, err := RunBot(req)

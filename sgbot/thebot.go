@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
@@ -18,7 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 )
 
 var stdlog, errlog *log.Logger
@@ -87,11 +88,11 @@ type pair struct {
 	value string
 }
 
-var requestHeaders = []pair{
-	{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-	{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
-	{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
-	{name: "X-Requested-With", value: "XMLHttpRequest"},
+var requestHeaders = http.Header{
+	"Accept": []string{"application/json, text/javascript, */*; q=0.01"},
+	"Content-Type": []string{"application/x-www-form-urlencoded; charset=UTF-8"},
+	"User-Agent": []string{"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
+	"X-Requested-With": []string{"XMLHttpRequest"},
 }
 
 const (
@@ -104,47 +105,23 @@ const (
 
 // TheBot class for work with SteamGifts pages
 type TheBot struct {
-	token string
-
-	// http client
-	client  *http.Client
-	cookies []*http.Cookie
-	// TODO move to botdaemon
-	// cookiesFileModifiedTime time.Time
-
 	steamID string
 	steamAPIKey string
 
 	gamesWhitelist map[uint64]bool
 	gamesWon       []uint64
 
-	// page cache
-	currentDocument *goquery.Document
-	currentURL      string
+	cookies []*http.Cookie
 
 	enteredGiveAways []string
 }
 
-func (b *TheBot) clean() {
-	b.token = ""
-	b.currentURL = ""
-}
-
 // InitBot initilize bot fields, load configs
 func (b *TheBot) InitBot(steamProfile string, apiKey string) error {
-	b.clean()
-
 	b.steamID = steamProfile
 	b.steamAPIKey = apiKey
 	b.gamesWhitelist = make(map[uint64]bool)
 	b.enteredGiveAways = make([]string, 0)
-
-	jar, err := cookiejar.New(&cookiejar.Options{})
-	if err != nil {
-		return err
-	}
-
-	b.client = &http.Client{Jar: jar}
 	return nil
 }
 
@@ -208,285 +185,312 @@ func (b *TheBot) getSteamLists() (err error) {
 	}
 
 	// parse followed games entries
-	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	url, err := url.Parse(baseSteamProfileURL + b.steamID + steamFollowed)
+	if err != nil {
+		return
+	}
+
+	err = navigate(&ctx, url, b.cookies)
 	if err != nil {
 		stdlog.Println("can't fetch followed games", err)
 		return &BotError{time.Now(), "can't fetch followed games"}
 	}
-	followed := doc.Find("div[data-appid]")
-	stdlog.Println("followed games entries", followed.Size())
-	followed.Each(func(_ int, s *goquery.Selection) {
-		id, _ := s.Attr("data-appid")
-		numID, _ := strconv.ParseUint(id, 10, 64)
-		b.gamesWhitelist[numID] = true
-	})
+
+	var followed []*cdp.Node
+	err = chromedp.Run(ctx, chromedp.Nodes("div[data-appid]", &followed, chromedp.NodeVisible, chromedp.ByQueryAll))
+	if err != nil {
+		return
+	}
+	stdlog.Println("followed games entries", len(followed))
+
+	for i := 0; i < len(followed); i++ {
+		id, _ := strconv.ParseUint(followed[i].AttributeValue("data-appid"), 10, 64)
+		b.gamesWhitelist[id] = true
+	}
 
 	stdlog.Println("steam profile parsed successfully")
 	return nil
 }
 
-func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
-	pageURL, err := url.Parse(baseURL + path)
-	if err != nil {
-		return
+func navigate(ctx *context.Context, url *url.URL, cookies []*http.Cookie) error {
+	all := chromedp.Tasks{
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			for i := 0; i <  len(cookies); i++ {
+				if cookies[i].Domain != url.Host {
+					continue
+				}
+				err := network.SetCookie(cookies[i].Name, cookies[i].Value).
+					WithDomain(cookies[i].Domain).
+					WithHTTPOnly(cookies[i].HttpOnly).
+					Do(ctx)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}),
+		chromedp.Navigate(url.String()),
 	}
 
-	req, err := http.NewRequest(http.MethodPost, pageURL.String(), bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		return
-	}
-
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
-	}
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return
-	}
-
-	defer resp.Body.Close()
-
-	answer, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-	stdlog.Println("giveaway post request answer", string(answer))
-
-	r := postResponse{}
-	err = json.Unmarshal(answer, &r)
-
-	return r.Type == "success", err
+	return chromedp.Run(*ctx, all)
 }
 
-func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
-	pageURL, err := url.Parse(uri)
-	if err != nil {
-		return
-	}
+// func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
+// 	pageURL, err := url.Parse(uri)
+// 	if err != nil {
+// 		return
+// 	}
 
-	req, err := http.NewRequest("GET", pageURL.String(), nil)
-	if err != nil {
-		return
-	}
+// 	req, err := http.NewRequest("GET", pageURL.String(), nil)
+// 	if err != nil {
+// 		return
+// 	}
 
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
-	}
+// 	for _, h := range requestHeaders {
+// 		req.Header.Add(h.name, h.value)
+// 	}
 
-	for _, k := range b.cookies {
-		if k.Domain != pageURL.Host {
-			continue
-		}
+// 	for _, k := range b.cookies {
+// 		if k.Domain != pageURL.Host {
+// 			continue
+// 		}
 
-		req.AddCookie(k)
-	}
+// 		req.AddCookie(k)
+// 	}
 
-	stdlog.Printf("getPageCustom. Cookies for %s : %d", pageURL.Host, len(b.cookies))
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return
-	}
+// 	stdlog.Printf("getPageCustom. Cookies for %s : %d", pageURL.Host, len(b.cookies))
+// 	resp, err := b.client.Do(req)
+// 	if err != nil {
+// 		return
+// 	}
 
-	defer resp.Body.Close()
+// 	defer resp.Body.Close()
 
-	retPath = pageURL.String()
-	retDoc, err = goquery.NewDocumentFromReader(resp.Body)
+// 	retPath = pageURL.String()
+// 	retDoc, err = goquery.NewDocumentFromReader(resp.Body)
 
-	return
-}
+// 	return
+// }
 
-func (b *TheBot) getPage(path string) (err error) {
-	if b.currentURL == baseURL + path {
-		return nil
-	}
+// func (b *TheBot) getPage(path string) (err error) {
+// 	if b.currentURL == baseURL + path {
+// 		return nil
+// 	}
 
-	b.currentURL, b.currentDocument, err = b.getPageCustom(baseURL + path)
-	return err
-}
+// 	b.currentURL, b.currentDocument, err = b.getPageCustom(baseURL + path)
+// 	return err
+// }
 
-func (b *TheBot) parseToken(str string) string {
-	return str[len(str)-32:]
-}
+// func (b *TheBot) parseToken(str string) string {
+// 	return str[len(str)-32:]
+// }
 
 func (b *TheBot) setCookies(cookies []*http.Cookie) {
 	b.cookies = cookies
 }
 
 func (b *TheBot) getUserInfo() (err error) {
-	err = b.getPage(sgAccountInfo)
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	url, err := url.Parse(baseURL)
 	if err != nil {
 		return
 	}
 
-	b.token = ""
-	points := 0
-
-	userName, _ := b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-	ttt, res := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
-	if res {
-		b.token = b.parseToken(ttt)
-		points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+	err = navigate(&ctx, url, b.cookies)
+	if err != nil {
+		return
 	}
 
-	if userName == "" || b.token == "" {
+	// var points string
+	// err = chromedp.Run(ctx, chromedp.Text("span.nav__points", &points, chromedp.ByQuery, chromedp.NodeVisible))
+	// if err != nil {
+	// 	return		
+	// }
+
+	var userName string
+	var ok bool
+	err = chromedp.Run(ctx, chromedp.AttributeValue("a.nav__avatar-outer-wrap", "href", &userName, &ok, chromedp.ByQuery, chromedp.NodeVisible))
+	if err != nil {
+		return
+	}
+	
+	if !ok || len(userName) == 0 {
 		return &BotError{time.Now(), "no user information. please refresh cookies or parser"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d]\n", userName, points)
+	// stdlog.Printf("receive info [user:%s][pts:%d]\n", userName, points)
 
-	b.gamesWon = make([]uint64, 0)
-	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
-		b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
-			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 &&
-									s.Find("div.table__gift-feedback-not-received").Size() == 0 {
-				// steam id
-				steamid, _ := s.Find("a.table_image_thumbnail").First().Attr("style")
-				// background-image:url(https://steamcdn-a.akamaihd.net/steam/apps/265930/capsule_184x69.jpg); - [5]
-				n, _ := strconv.ParseUint(strings.Split(steamid, "/")[5], 10, 64)
+	// b.gamesWon = make([]uint64, 0)
+	// if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
+	// 	b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
+	// 		if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 &&
+	// 								s.Find("div.table__gift-feedback-not-received").Size() == 0 {
+	// 			// steam id
+	// 			steamid, _ := s.Find("a.table_image_thumbnail").First().Attr("style")
+	// 			// background-image:url(https://steamcdn-a.akamaihd.net/steam/apps/265930/capsule_184x69.jpg); - [5]
+	// 			n, _ := strconv.ParseUint(strings.Split(steamid, "/")[5], 10, 64)
 
-				b.gamesWon = append(b.gamesWon, n)
-			}
-		})
-	}
+	// 			b.gamesWon = append(b.gamesWon, n)
+	// 		}
+	// 	})
+	// }
 
-	if len(b.gamesWon) > 0 {
-		stdlog.Println("you've won", b.gamesWon)
-	}
+	// if len(b.gamesWon) > 0 {
+	// 	stdlog.Println("you've won", b.gamesWon)
+	// }
 
 	return nil
 }
 
-func (b *TheBot) checkWonList(gid uint64) bool {
-	if len(b.gamesWon) == 0 {
-		return false
-	}
+// func (b *TheBot) checkWonList(gid uint64) bool {
+// 	if len(b.gamesWon) == 0 {
+// 		return false
+// 	}
 
-	for _, v := range b.gamesWon {
-		if v == gid {
-			return true
-		}
-	}
+// 	for _, v := range b.gamesWon {
+// 		if v == gid {
+// 			return true
+// 		}
+// 	}
 
-	return false
-}
+// 	return false
+// }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-	_, doc, err := b.getPageCustom(baseURL + path)
+	url, err := url.Parse(baseURL + path)
 	if err != nil {
-		return true, err
+		return
 	}
 
-	sel := doc.Find("div.widget-container")
-	if sel.Size() == 0 {
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	err = navigate(&ctx, url, b.cookies)
+	if err != nil {
+		return
+	}
+
+	var sel []*cdp.Node
+	err = chromedp.Run(ctx, chromedp.Nodes("div.widget-container", &sel, chromedp.NodeVisible, chromedp.ByQueryAll))
+	// sel := doc.Find("div.widget-container")
+	if len(sel) == 0 {
 		return true, &BotError{time.Now(), "strange page " + path}
 	}
 
-	sel = doc.Find("div.sidebar__error")
-	if sel.Size() != 0 {
+	err = chromedp.Run(ctx, chromedp.Nodes("div.sidebar__error", &sel, chromedp.NodeVisible, chromedp.ByQueryAll))
+	// sel = doc.Find("div.sidebar__error")
+	if len(sel) != 0 {
 		return false, &BotError{time.Now(), "not enough points"}
 	}
 
-	sel = doc.Find("div.sidebar__entry-insert")
-	// no buttons - exist or not enough points
-	if sel.Size() == 0 {
+	err = chromedp.Run(ctx, chromedp.Nodes("div.sidebar__entry-insert", &sel, chromedp.NodeVisible, chromedp.ByQueryAll))
+	// sel = doc.Find("div.sidebar__entry-insert")
+	// no buttons - exists or not enough points
+	if len(sel) != 0 {
 		return false, nil
 	}
 
 	// skip already entered
 	result := true
-	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
-		class, _ := s.Attr("class")
+	for i := 0; i < len(sel) && result; i++ {
+		class := sel[i].AttributeValue("class")
 		result = !strings.Contains(class, "is-hidden")
-		return result
-	})
-
+	}
 	return result, nil
 }
 
-func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
-	params := url.Values{}
-	params.Add("xsrf_token", b.token)
-	params.Add("code", game.SGID)
-	params.Add("do", "entry_insert")
+func (b *TheBot) enterGiveaway(game GiveAway) (err error) {
+	url, err := url.Parse(baseURL + game.URL)
+	if err != nil {
+		return
+	}
 
-	return b.postRequest("/ajax.php", params)
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	err = navigate(&ctx, url, b.cookies)
+	if err != nil {
+		return
+	}
+
+	return chromedp.Run(ctx, 
+		chromedp.WaitVisible(`body > footer`),
+		chromedp.Click(`sidebar__entry-insert`, chromedp.NodeVisible),
+	)
 }
 
-func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
+func (b *TheBot) getGiveaways(ctx *context.Context) (giveaways []GiveAway) {
 	re := regexp.MustCompile(`[0-9]+`)
-	doc.Find("div.giveaway__row-outer-wrap").Each(func(idx int, s *goquery.Selection) {
-		sgCode, _ := s.Find("a.giveaway__heading__name").First().Attr("href")
-		sgCode = strings.Split(sgCode, "/")[2]
 
-		game := s.Find("a.giveaway__heading__name").First().Text()
-
-		x, ok := s.Find("a.giveaway__icon[target='_blank']").First().Attr("href")
-		if !ok {
-			errlog.Println("no link?", sgCode)
-			return
+	var nodes []*cdp.Node
+	chromedp.Run(*ctx, chromedp.Nodes("div.giveaway__row-outer-wrap", &nodes, chromedp.NodeVisible, chromedp.ByQueryAll))
+	for i := 0; i < len(nodes); i++ {
+		var c []*cdp.Node
+		err := chromedp.Run(*ctx, chromedp.Nodes("a.giveaway__heading__name", &c, chromedp.ByQuery, chromedp.FromNode(nodes[i])))
+		if err != nil || len(c) == 0 {
+			continue
 		}
+		sgURL := c[0].AttributeValue("href")
+		sgCode := strings.Split(sgURL, "/")[2]
+		game := c[0].NodeValue
 
-		// get steamgifts giveaway code (unique url)
-		sgURL, ok := s.Find("a.giveaway__heading__name").First().Attr("href")
-		if !ok {
-			errlog.Println("skip giveaway - can't find url", sgCode)
-			return
+		err = chromedp.Run(*ctx, chromedp.Nodes("span[data-timestamp]", &c, chromedp.ByQuery, chromedp.FromNode(nodes[i])))
+		if err != nil || len(c) == 0 {
+			continue
 		}
 
 		// get giveaway timestamp
-		y, ok := s.Find("span[data-timestamp]").First().Attr("data-timestamp")
-		if !ok {
-			errlog.Println("can't parse timestamp for", sgCode)
-			return
+		t, _ := strconv.ParseInt(c[0].AttributeValue("data-timestamp"), 10, 64)
+
+		err = chromedp.Run(*ctx, chromedp.Nodes("a.giveaway__icon[target='_blank']", &c, chromedp.ByQuery, chromedp.FromNode(nodes[i])))
+		if err != nil || len(c) == 0 {
+			continue
 		}
+		
+		steamUrl := c[0].AttributeValue("href")
+		if strings.Contains(steamUrl, "/sub/") { // parse sub page
+			stdlog.Println("parse 'sub' giveaway", steamUrl)
+			steamCtx, cancel := chromedp.NewContext(context.Background())
+			defer cancel()
 
-		t, _ := strconv.ParseInt(y, 10, 64)
-
-		if strings.Contains(x, "/sub/") { // parse sub page
-			stdlog.Println("parse 'sub' giveaway", x)
-			_, subDoc, err := b.getPageCustom(x)
+			url, err := url.Parse(baseURL + sgWishlistURL)
 			if err != nil {
-				errlog.Println("can't get page", x)
 				return
 			}
 
-			// doc := subDoc.Find("html")
-			// html, eee := doc.Html()
-			// if eee != nil {
-			// 	log.Fatal(err)
-			// }
-			// stdlog.Printf("[[[[%s]]]]", html)
+			err = navigate(&steamCtx, url, b.cookies)
+			if err != nil {
+				errlog.Println("can't get page", steamUrl)
+				return
+			}
 
-			subDoc.Find("div.tab_item").EachWithBreak(func(subIdx int, subs *goquery.Selection) bool {
-				subID, subOk := subs.Attr("data-ds-appid")
-				if !subOk {
-					return true
-				}
-
-				gid, _ := strconv.ParseUint(subID, 10, 64)
-
+			chromedp.Run(steamCtx, chromedp.Nodes("div.tab_item", &c, chromedp.NodeVisible, chromedp.ByQueryAll))
+			for k := 0; k < len(c); k++ {
+				gid, _ := strconv.ParseUint(c[k].AttributeValue("data-ds-appid"), 10, 64)
 				_, ok := b.gamesWhitelist[gid]
 				if !ok {
 					// stdlog.Println("skip giveaway by whitelist", gid)
-					return true
+					continue;
 				}
 
-				if b.checkWonList(gid) {
-					// stdlog.Println("skip - already won! receve your gift!")
-					return true
-				}
+				// if b.checkWonList(gid) {
+				// 	// stdlog.Println("skip - already won! receve your gift!")
+				// 	continue
+				// }
 
-				// add nanoseconds to split giveaways which will be ended at one time
 				giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
-				// stop parse sub page - we're decided to be in!
-				return false
-			})
-		} else { // parse single game GA
+			}
+		} else {
+			// parse single game GA
 			// get steam game id and check it whitelisted
-			strgid := re.FindAllString(x, -1)
+			strgid := re.FindAllString(steamUrl, -1)
 			if len(strgid) == 0 {
-				stdlog.Println("skip giveaway - can't find steam id", x)
+				stdlog.Println("skip giveaway - can't find steam id", steamUrl)
 				return
 			}
 			gid, _ := strconv.ParseUint(strgid[0], 10, 64)
@@ -497,15 +501,15 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 				return
 			}
 
-			if b.checkWonList(gid) {
-				// stdlog.Println("skip - already won! receve your gift!")
-				return
-			}
+			// if b.checkWonList(gid) {
+			// 	// stdlog.Println("skip - already won! receve your gift!")
+			// 	return
+			// }
 
 			// add nanoseconds to split giveaways which will be ended at one time
 			giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
 		}
-	})
+	}
 
 	// stdlog.Println(giveaways)
 	return giveaways
@@ -547,15 +551,10 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			time.Sleep(d)
 		}
 
-		status, err = b.enterGiveaway(game)
+		err = b.enterGiveaway(game)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
-		}
-		if !status {
-			stdlog.Printf("external error when enter for [%+v]. wait\n", game)
-			count = count + 1
-			break
 		}
 		duration := game.Time.Sub(time.Now())
 		timeDesc := fmt.Sprintf("Draw in %.f hour(s)", duration.Hours())
@@ -582,29 +581,40 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 		return 0, errors.New("math: square root of negative number")
 	}
 
-	err = b.getPage("/")
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+
+	stdlog.Println("process wishlist")
+	url, err := url.Parse(baseURL + sgWishlistURL)
+	if err != nil {
+		return 0, err
+	}
+	err = navigate(&ctx, url, b.cookies)
 	if err != nil {
 		return 0, err
 	}
 
-	stdlog.Println("check wishlist")
-	_, doc, err := b.getPageCustom(baseURL + sgWishlistURL)
-	if err != nil {
-		return 0, err
-	}
-	giveaways := b.getGiveaways(doc)
+	giveaways := b.getGiveaways(&ctx)
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entriesWishlist := b.processGiveaways(giveaways, time.Hour * 24 * 7 * 5) // 5 weeks - all
-	stdlog.Println("processed giveaways", entriesWishlist)
+	stdlog.Println("processed giveaways in wishlist", entriesWishlist)
 
-	stdlog.Println("check main page")
-	giveaways = b.getGiveaways(b.currentDocument)
+	stdlog.Println("process main page")
+	url, err = url.Parse(baseURL + sgWishlistURL)
+	if err != nil {
+		return 0, err
+	}
+	err = navigate(&ctx, url, b.cookies)
+	if err != nil {
+		return 0, err
+	}
+	giveaways = b.getGiveaways(&ctx)
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
 
 	defer stdlog.Println("processed giveaways", entriesWishlist + entriesMainPage)
 
-	return count, nil
+	return entriesWishlist + entriesMainPage, nil
 }
 
 func (b *TheBot) addDigest(msg string) {
