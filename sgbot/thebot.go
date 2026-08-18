@@ -216,6 +216,7 @@ func (b *TheBot) getSteamLists() (err error) {
 }
 
 func navigate(ctx *context.Context, url *url.URL, cookies []*http.Cookie) error {
+	log.Printf("navigate: %s", url.String())
 	all := chromedp.Tasks{
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			for i := 0; i <  len(cookies); i++ {
@@ -233,6 +234,7 @@ func navigate(ctx *context.Context, url *url.URL, cookies []*http.Cookie) error 
 			return nil
 		}),
 		chromedp.Navigate(url.String()),
+		chromedp.WaitReady("body"),
 	}
 
 	return chromedp.Run(*ctx, all)
@@ -293,18 +295,27 @@ func (b *TheBot) setCookies(cookies []*http.Cookie) {
 }
 
 func (b *TheBot) getUserInfo() (err error) {
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
-
 	url, err := url.Parse(baseURL)
 	if err != nil {
 		return
 	}
 
-	err = navigate(&ctx, url, b.cookies)
+	ctx, cancel := chromedp.NewContext(
+		context.Background(),
+		// chromedp.WithDebugf(log.Printf),
+	)
+	defer cancel()
+	ctxTimeout, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelTimeout()
+
+	err = navigate(&ctxTimeout, url, b.cookies)
 	if err != nil {
-		return
+		return &BotError{time.Now(), "navigation timeout: " + err.Error()}
 	}
+
+	var html string
+	err = chromedp.Run(ctxTimeout, chromedp.OuterHTML("html", &html))
+	log.Printf("page html\n%s", html)
 
 	// var points string
 	// err = chromedp.Run(ctx, chromedp.Text("span.nav__points", &points, chromedp.ByQuery, chromedp.NodeVisible))
@@ -314,9 +325,9 @@ func (b *TheBot) getUserInfo() (err error) {
 
 	var userName string
 	var ok bool
-	err = chromedp.Run(ctx, chromedp.AttributeValue("a.nav__avatar-outer-wrap", "href", &userName, &ok, chromedp.ByQuery, chromedp.NodeVisible))
+	err = chromedp.Run(ctxTimeout, chromedp.AttributeValue(".nav__avatar-outer-wrap", "href", &userName, &ok, chromedp.ByQuery))
 	if err != nil {
-		return
+		return &BotError{time.Now(), "AttributeValue timeout: " + err.Error()}
 	}
 	
 	if !ok || len(userName) == 0 {
@@ -625,3 +636,69 @@ func init() {
 	stdlog = log.New(os.Stdout, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 	errlog = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lmicroseconds)
 }
+
+/*
+
+package main
+
+import (
+	"context"
+	"log"
+	"time"
+
+	"://github.com"
+	"github.com/chromedp/chromedp"
+)
+
+func main() {
+	// 1. Define your 3x-ui proxy credentials and address
+	proxyServer := "http://your-server-ip:your-port" 
+	proxyUser := "your_3xui_username"
+	proxyPass := "your_3xui_password"
+
+	// 2. Configure Chromedp Allocator Options with the proxy server flag
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ProxyServer(proxyServer),
+	)
+
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer allocCancel()
+
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	defer cancel()
+
+	// 3. Handle Proxy Authentication Event if password-protected
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		if authEvent, ok := ev.(*fetch.EventAuthRequired); ok {
+			go func() {
+				err := chromedp.Run(ctx,
+					fetch.ContinueWithAuth(authEvent.RequestID, &fetch.AuthChallengeResponse{
+						Response: fetch.AuthChallengeResponseResponseProvideCredentials,
+						Username: proxyUser,
+						Password: proxyPass,
+					}),
+				)
+				if err != nil {
+					log.Printf("Failed to provide auth credentials: %v", err)
+				}
+			}()
+		}
+	})
+
+	// 4. Run your scraping tasks
+	var ipResult string
+	err := chromedp.Run(ctx,
+		// Enable the network Fetch domain to catch the authentication challenge
+		fetch.Enable(), 
+		chromedp.Navigate("https://ipify.org"),
+		chromedp.Text("body", &ipResult),
+	)
+	if err != nil {
+		log.Fatalf("Chromedp execution failed: %v", err)
+	}
+
+	log.Printf("Browser routing successful. IP address through 3x-ui: %s", ipResult)
+}
+
+
+*/
