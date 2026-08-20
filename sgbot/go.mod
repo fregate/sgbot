@@ -2,8 +2,6 @@ module sgbot.mem4.me/sgbot
 
 go 1.23.1
 
-toolchain go1.23.12
-
 require (
 	github.com/PuerkitoBio/goquery v1.8.0
 	github.com/yandex-cloud/go-sdk v0.0.0-20220504074640-ff8f2ace74af

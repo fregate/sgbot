@@ -3,7 +3,6 @@ module gogbot.mem4.me/gogbot
 go 1.17
 
 require (
-	github.com/PuerkitoBio/goquery v1.8.0
 	github.com/yandex-cloud/go-sdk v0.0.0-20220504074640-ff8f2ace74af
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0
 )
