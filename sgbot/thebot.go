@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	scraperapi "github.com/zenrows/zenrows-go-sdk/service/api"
 )
 
 var stdlog, errlog *log.Logger
@@ -82,18 +83,6 @@ type postResponse struct {
 	Points  string `json:"points"`
 }
 
-type pair struct {
-	name  string
-	value string
-}
-
-var requestHeaders = []pair{
-	{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-	{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
-	{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
-	{name: "X-Requested-With", value: "XMLHttpRequest"},
-}
-
 const (
 	baseURL             string = "https://www.steamgifts.com"
 	sgWishlistURL       string = "/giveaways/search?type=wishlist"
@@ -106,45 +95,38 @@ const (
 type TheBot struct {
 	token string
 
-	// http client
-	client  *http.Client
+	// client
+	client  *scraperapi.Client
 	cookies []*http.Cookie
-	// TODO move to botdaemon
-	// cookiesFileModifiedTime time.Time
 
+	// keys and auth
 	steamID string
 	steamAPIKey string
 
+	// games
 	gamesWhitelist map[uint64]bool
 	gamesWon       []uint64
 
-	// page cache
-	currentDocument *goquery.Document
-	currentURL      string
-
+	// digest update
 	enteredGiveAways []string
 }
 
 func (b *TheBot) clean() {
 	b.token = ""
-	b.currentURL = ""
+	// b.currentURL = ""
 }
 
 // InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(steamProfile string, apiKey string) error {
+func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey string) error {
 	b.clean()
 
 	b.steamID = steamProfile
-	b.steamAPIKey = apiKey
+	b.steamAPIKey = steamAPIKey
 	b.gamesWhitelist = make(map[uint64]bool)
 	b.enteredGiveAways = make([]string, 0)
 
-	jar, err := cookiejar.New(&cookiejar.Options{})
-	if err != nil {
-		return err
-	}
+	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(zenrowsAPIKey))
 
-	b.client = &http.Client{Jar: jar}
 	return nil
 }
 
@@ -208,7 +190,7 @@ func (b *TheBot) getSteamLists() (err error) {
 	}
 
 	// parse followed games entries
-	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
+	doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
 	if err != nil {
 		stdlog.Println("can't fetch followed games", err)
 		return &BotError{time.Now(), "can't fetch followed games"}
@@ -225,53 +207,20 @@ func (b *TheBot) getSteamLists() (err error) {
 	return nil
 }
 
-func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
+func (b *TheBot) postRequest(path string, queryParams url.Values) (status bool, err error) {
 	pageURL, err := url.Parse(baseURL + path)
 	if err != nil {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, pageURL.String(), bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		return
-	}
-
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
-	}
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return
-	}
-
-	defer resp.Body.Close()
-
-	answer, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-	stdlog.Println("giveaway post request answer", string(answer))
-
-	r := postResponse{}
-	err = json.Unmarshal(answer, &r)
-
-	return r.Type == "success", err
-}
-
-func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
-	pageURL, err := url.Parse(uri)
-	if err != nil {
-		return
-	}
-
-	req, err := http.NewRequest("GET", pageURL.String(), nil)
-	if err != nil {
-		return
-	}
-
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
+	params := &scraperapi.RequestParameters{
+		UsePremiumProxies: true,
+		CustomHeaders: http.Header{
+			"Referer": []string{baseURL},
+			"User-Agent": []string{"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"},
+			"Origin": []string{baseURL},
+			"Content-Type": []string{"application/x-www-form-urlencoded; charset=UTF-8"},
+		},
 	}
 
 	for _, k := range b.cookies {
@@ -279,30 +228,61 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 			continue
 		}
 
-		req.AddCookie(k)
+		params.CustomHeaders.Add("Cookie", k.String())
 	}
 
-	stdlog.Printf("getPageCustom. Cookies for %s : %d", pageURL.Host, len(b.cookies))
-	resp, err := b.client.Do(req)
+	resp, err := b.client.Post(
+		context.Background(),
+		pageURL.String(),
+		params,
+		queryParams.Encode())
 	if err != nil {
 		return
 	}
 
-	defer resp.Body.Close()
+	stdlog.Println("giveaway post request answer", pageURL.String(), resp.StatusCode(), string(resp.Body()))
 
-	retPath = pageURL.String()
-	retDoc, err = goquery.NewDocumentFromReader(resp.Body)
+	r := postResponse{}
 
-	return
+	if resp.StatusCode() == http.StatusOK {
+		err = json.Unmarshal(resp.Body(), &r)
+		return r.Type == "success", err
+	} else {
+		return false, nil
+	}
 }
 
-func (b *TheBot) getPage(path string) (err error) {
-	if b.currentURL == baseURL + path {
-		return nil
+func (b *TheBot) getPageCustom(uri string) (retDoc *goquery.Document, err error) {
+	pageURL, err := url.Parse(uri)
+	if err != nil {
+		return
 	}
 
-	b.currentURL, b.currentDocument, err = b.getPageCustom(baseURL + path)
-	return err
+	params := &scraperapi.RequestParameters{
+		JSRender:          true,
+		UsePremiumProxies: true,
+		WaitForSelector:   "body",
+		CustomHeaders:     http.Header{},
+	}
+
+	for _, k := range b.cookies {
+		if k.Domain != pageURL.Host {
+			continue
+		}
+
+		params.CustomHeaders.Add("Cookie", k.String())
+	}
+
+	resp, err := b.client.Get(context.Background(), pageURL.String(), params)
+	if err != nil {
+		return
+	}
+
+	return goquery.NewDocumentFromReader(bytes.NewReader(resp.Body()))
+}
+
+func (b *TheBot) getPage(path string) (doc *goquery.Document, err error) {
+	return b.getPageCustom(baseURL + path)
 }
 
 func (b *TheBot) parseToken(str string) string {
@@ -314,7 +294,7 @@ func (b *TheBot) setCookies(cookies []*http.Cookie) {
 }
 
 func (b *TheBot) getUserInfo() (err error) {
-	err = b.getPage(sgAccountInfo)
+	doc, err:= b.getPage(sgAccountInfo)
 	if err != nil {
 		return
 	}
@@ -322,11 +302,11 @@ func (b *TheBot) getUserInfo() (err error) {
 	b.token = ""
 	points := 0
 
-	userName, _ := b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-	ttt, res := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
+	userName, _ := doc.Find("a.nav__avatar-outer-wrap").First().Attr("href")
+	ttt, res := doc.Find("div.js__logout").First().Attr("data-form")
 	if res {
 		b.token = b.parseToken(ttt)
-		points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+		points, _ = strconv.Atoi(doc.Find("span.nav__points").First().Text())
 	}
 
 	if userName == "" || b.token == "" {
@@ -336,8 +316,8 @@ func (b *TheBot) getUserInfo() (err error) {
 	stdlog.Printf("receive info [user:%s][pts:%d]\n", userName, points)
 
 	b.gamesWon = make([]uint64, 0)
-	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
-		b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
+	if doc.Find("div.nav__notification").First() != nil { // won something
+		doc.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
 			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 &&
 									s.Find("div.table__gift-feedback-not-received").Size() == 0 {
 				// steam id
@@ -372,7 +352,7 @@ func (b *TheBot) checkWonList(gid uint64) bool {
 }
 
 func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-	_, doc, err := b.getPageCustom(baseURL + path)
+	doc, err := b.getPageCustom(baseURL + path)
 	if err != nil {
 		return true, err
 	}
@@ -405,6 +385,10 @@ func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
 }
 
 func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
+	// params := map[string]string{
+	// 	"xsrf_token" : b.token,
+	// 	"code": game.SGID,
+	// 	"do": "entry_insert"}
 	params := url.Values{}
 	params.Add("xsrf_token", b.token)
 	params.Add("code", game.SGID)
@@ -445,7 +429,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 		if strings.Contains(x, "/sub/") { // parse sub page
 			stdlog.Println("parse 'sub' giveaway", x)
-			_, subDoc, err := b.getPageCustom(x)
+			subDoc, err := b.getPageCustom(x)
 			if err != nil {
 				errlog.Println("can't get page", x)
 				return
@@ -582,13 +566,8 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 		return 0, errors.New("math: square root of negative number")
 	}
 
-	err = b.getPage("/")
-	if err != nil {
-		return 0, err
-	}
-
 	stdlog.Println("check wishlist")
-	_, doc, err := b.getPageCustom(baseURL + sgWishlistURL)
+	doc, err := b.getPageCustom(baseURL + sgWishlistURL)
 	if err != nil {
 		return 0, err
 	}
@@ -598,7 +577,7 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
-	giveaways = b.getGiveaways(b.currentDocument)
+	giveaways = b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
 
