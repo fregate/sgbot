@@ -2,23 +2,24 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math/rand"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	scraperapi "github.com/zenrows/zenrows-go-sdk/service/api"
 )
 
 var stdlog, errlog *log.Logger
@@ -42,39 +43,6 @@ type GiveAway struct {
 	Time time.Time
 }
 
-// By is the type of a "less" function that defines the ordering of its Time arguments.
-// time sorter function
-type By func(p1, p2 *GiveAway) bool
-
-func (by By) sortGAs(entries []GiveAway) {
-	ps := &timeSorter{
-		entries: entries,
-		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
-	}
-	sort.Sort(ps)
-}
-
-// timeSorter joins a By function and a slice of Time to be sorted.
-type timeSorter struct {
-	entries []GiveAway
-	by      func(p1, p2 *GiveAway) bool // Closure used in the Less method.
-}
-
-// Len is part of sort.Interface.
-func (s *timeSorter) Len() int {
-	return len(s.entries)
-}
-
-// Swap is part of sort.Interface.
-func (s *timeSorter) Swap(i, j int) {
-	s.entries[i], s.entries[j] = s.entries[j], s.entries[i]
-}
-
-// Less is part of sort.Interface. It is implemented by calling the "by" closure in the sorter.
-func (s *timeSorter) Less(i, j int) bool {
-	return s.by(&s.entries[i], &s.entries[j])
-}
-
 // {"type":"success","entry_count":"108","points":"147"}
 type postResponse struct {
 	Type    string `json:"type"`
@@ -82,87 +50,55 @@ type postResponse struct {
 	Points  string `json:"points"`
 }
 
-type pair struct {
-	name  string
-	value string
-}
-
-var requestHeaders = []pair{
-	{name: "Accept", value: "application/json, text/javascript, */*; q=0.01"},
-	{name: "Content-Type", value: "application/x-www-form-urlencoded; charset=UTF-8"},
-	{name: "User-Agent", value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36"},
-	{name: "X-Requested-With", value: "XMLHttpRequest"},
-}
-
 const (
 	baseURL             string = "https://www.steamgifts.com"
 	sgWishlistURL       string = "/giveaways/search?type=wishlist"
 	sgAccountInfo       string = "/giveaways/won"
-	baseSteamProfileURL string = "https://steamcommunity.com/profiles/"
-	steamFollowed       string = "/followedgames/"
+	steamProfileURL     string = "https://steamcommunity.com/profiles/%s/followedgames/"
 )
 
-// TheBot class for work with SteamGifts pages
-type TheBot struct {
-	token string
-
-	// http client
-	client  *http.Client
-	cookies []*http.Cookie
-	// TODO move to botdaemon
-	// cookiesFileModifiedTime time.Time
-
-	steamID string
-	steamAPIKey string
-
-	gamesWhitelist map[uint64]bool
-	gamesWon       []uint64
-
-	// page cache
-	currentDocument *goquery.Document
-	currentURL      string
-
-	enteredGiveAways []string
+type ApiResponse[T any] struct {
+	Resp T	`json:"response"`
 }
 
-func (b *TheBot) clean() {
-	b.token = ""
-	b.currentURL = ""
-}
+func fetchFollowedList(steamID string, apiKey string) (map[uint64]bool, error) {
+	url := fmt.Sprintf("https://api.steampowered.com/IStoreService/GetGamesFollowed/v1/?id=%s&steamid=%s", apiKey, steamID)
 
-// InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(steamProfile string, apiKey string) error {
-	b.clean()
-
-	b.steamID = steamProfile
-	b.steamAPIKey = apiKey
-	b.gamesWhitelist = make(map[uint64]bool)
-	b.enteredGiveAways = make([]string, 0)
-
-	jar, err := cookiejar.New(&cookiejar.Options{})
+	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed process request: %v", err)
 	}
 
-	b.client = &http.Client{Jar: jar}
-	return nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
+	}
+
+	type Items struct {
+		Items []uint64	`json:"appids"`
+	}
+
+	games := ApiResponse[Items]{}
+	err = json.Unmarshal(answer, &games)
+	if err != nil {
+		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
+	}
+
+	out := make(map[uint64]bool)
+	for _, app := range games.Resp.Items {
+		out[app] = true
+	}
+
+	return out, nil
 }
 
-type GameInfo struct {
-	AppID     uint64 `json:"appid"`
-	Priority  int `json:"priority"`
-	DateAdded int `json:"added"`
-}
-
-type WishlistItems struct {
-	Items []GameInfo	`json:"items"`
-}
-
-type WishlistGames struct {
-	Resp WishlistItems	`json:"response"`
-}
-
-func fetchWishlist(steamID string, apiKey string) ([]GameInfo, error) {
+func fetchWishlist(steamID string, apiKey string) (map[uint64]bool, error) {
 	url := fmt.Sprintf("https://api.steampowered.com/IWishlistService/GetWishlist/v1?id=%s&steamid=%s", apiKey, steamID)
 
 	resp, err := http.Get(url)
@@ -181,13 +117,77 @@ func fetchWishlist(steamID string, apiKey string) ([]GameInfo, error) {
 		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
 	}
 
-	games := WishlistGames{}
+	type GameInfo struct {
+		AppID     uint64 `json:"appid"`
+		Priority  int    `json:"priority"`
+		DateAdded int    `json:"added"`
+	}
+
+	type WishlistItems struct {
+		Items []GameInfo	`json:"items"`
+	}
+
+	games := ApiResponse[WishlistItems]{}
 	err = json.Unmarshal(answer, &games)
 	if err != nil {
 		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
 	}
 
-	return games.Resp.Items, nil
+	out := make(map[uint64]bool)
+	for _, app := range games.Resp.Items {
+		out[app.AppID] = true
+	}
+
+	return out, nil
+}
+
+func fetchSteamPage(url string) (retDoc *goquery.Document, err error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed process request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
+	}
+
+	return goquery.NewDocumentFromReader(bytes.NewReader(answer))
+}
+
+// TheBot class for work with SteamGifts pages
+type TheBot struct {
+	// client
+	client  *scraperapi.Client
+	cookies []*http.Cookie
+
+	// keys and auth
+	steamID string
+	steamAPIKey string
+
+	// games
+	gamesWhitelist map[uint64]bool
+
+	// digest update
+	digest []string
+}
+
+// InitBot initilize bot fields, load configs
+func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey string) error {
+	b.steamID = steamProfile
+	b.steamAPIKey = steamAPIKey
+	b.gamesWhitelist = make(map[uint64]bool)
+	b.digest = make([]string, 0)
+
+	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(zenrowsAPIKey))
+
+	return nil
 }
 
 func (b *TheBot) getSteamLists() (err error) {
@@ -203,75 +203,34 @@ func (b *TheBot) getSteamLists() (err error) {
 	}
 
 	stdlog.Println("wishlist entries", len(wg))
-	for _, game := range wg {
-		b.gamesWhitelist[game.AppID] = true
-	}
+	maps.Copy(b.gamesWhitelist, wg)
 
 	// parse followed games entries
-	_, doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
+	wg, err = fetchFollowedList(b.steamID, b.steamAPIKey)
 	if err != nil {
 		stdlog.Println("can't fetch followed games", err)
 		return &BotError{time.Now(), "can't fetch followed games"}
 	}
-	followed := doc.Find("div[data-appid]")
-	stdlog.Println("followed games entries", followed.Size())
-	followed.Each(func(_ int, s *goquery.Selection) {
-		id, _ := s.Attr("data-appid")
-		numID, _ := strconv.ParseUint(id, 10, 64)
-		b.gamesWhitelist[numID] = true
-	})
+	stdlog.Println("followed entries", len(wg))
+	maps.Copy(b.gamesWhitelist, wg)
 
 	stdlog.Println("steam profile parsed successfully")
 	return nil
 }
 
-func (b *TheBot) postRequest(path string, params url.Values) (status bool, err error) {
+func (b *TheBot) postRequest(path string, queryParams url.Values) (status bool, err error) {
 	pageURL, err := url.Parse(baseURL + path)
 	if err != nil {
 		return
 	}
 
-	req, err := http.NewRequest(http.MethodPost, pageURL.String(), bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		return
-	}
-
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
-	}
-
-	resp, err := b.client.Do(req)
-	if err != nil {
-		return
-	}
-
-	defer resp.Body.Close()
-
-	answer, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return
-	}
-	stdlog.Println("giveaway post request answer", string(answer))
-
-	r := postResponse{}
-	err = json.Unmarshal(answer, &r)
-
-	return r.Type == "success", err
-}
-
-func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Document, err error) {
-	pageURL, err := url.Parse(uri)
-	if err != nil {
-		return
-	}
-
-	req, err := http.NewRequest("GET", pageURL.String(), nil)
-	if err != nil {
-		return
-	}
-
-	for _, h := range requestHeaders {
-		req.Header.Add(h.name, h.value)
+	params := &scraperapi.RequestParameters{
+		CustomHeaders: http.Header{
+			"Referer": []string{baseURL},
+			"User-Agent": []string{"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0"},
+			"Origin": []string{baseURL},
+			"Content-Type": []string{"application/x-www-form-urlencoded; charset=UTF-8"},
+		},
 	}
 
 	for _, k := range b.cookies {
@@ -279,30 +238,59 @@ func (b *TheBot) getPageCustom(uri string) (retPath string, retDoc *goquery.Docu
 			continue
 		}
 
-		req.AddCookie(k)
+		params.CustomHeaders.Add("Cookie", k.String())
 	}
 
-	stdlog.Printf("getPageCustom. Cookies for %s : %d", pageURL.Host, len(b.cookies))
-	resp, err := b.client.Do(req)
+	resp, err := b.client.Post(
+		context.Background(),
+		pageURL.String(),
+		params,
+		queryParams.Encode())
 	if err != nil {
 		return
 	}
 
-	defer resp.Body.Close()
+	stdlog.Println("giveaway post request answer", pageURL.String(), resp.StatusCode(), string(resp.Body()))
 
-	retPath = pageURL.String()
-	retDoc, err = goquery.NewDocumentFromReader(resp.Body)
+	r := postResponse{}
 
-	return
+	if resp.StatusCode() == http.StatusOK {
+		err = json.Unmarshal(resp.Body(), &r)
+		return r.Type == "success", err
+	} else if resp.StatusCode() == http.StatusUnprocessableEntity {
+		stdlog.Printf("internal error (%s)", resp.Body())
+		return true, nil
+	} else {
+		return false, nil
+	}
 }
 
-func (b *TheBot) getPage(path string) (err error) {
-	if b.currentURL == baseURL + path {
-		return nil
+func (b *TheBot) getPageCustom(uri string) (retDoc *goquery.Document, err error) {
+	pageURL, err := url.Parse(uri)
+	if err != nil {
+		return
 	}
 
-	b.currentURL, b.currentDocument, err = b.getPageCustom(baseURL + path)
-	return err
+	params := &scraperapi.RequestParameters{
+		JSRender:          true,
+		WaitForSelector:   "body",
+		CustomHeaders:     http.Header{},
+	}
+
+	for _, k := range b.cookies {
+		if k.Domain != pageURL.Host {
+			continue
+		}
+
+		params.CustomHeaders.Add("Cookie", k.String())
+	}
+
+	resp, err := b.client.Get(context.Background(), pageURL.String(), params)
+	if err != nil {
+		return
+	}
+
+	return goquery.NewDocumentFromReader(bytes.NewReader(resp.Body()))
 }
 
 func (b *TheBot) parseToken(str string) string {
@@ -313,100 +301,23 @@ func (b *TheBot) setCookies(cookies []*http.Cookie) {
 	b.cookies = cookies
 }
 
-func (b *TheBot) getUserInfo() (err error) {
-	err = b.getPage(sgAccountInfo)
-	if err != nil {
-		return
-	}
-
-	b.token = ""
-	points := 0
-
-	userName, _ := b.currentDocument.Find("a.nav__avatar-outer-wrap").First().Attr("href")
-	ttt, res := b.currentDocument.Find("div.js__logout").First().Attr("data-form")
+func (b *TheBot) getToken(doc *goquery.Document) (token string, err error) {
+	userName, _ := doc.Find("a.nav__avatar-outer-wrap").First().Attr("href")
+	ttt, res := doc.Find("div.js__logout").First().Attr("data-form")
 	if res {
-		b.token = b.parseToken(ttt)
-		points, _ = strconv.Atoi(b.currentDocument.Find("span.nav__points").First().Text())
+		token = b.parseToken(ttt)
 	}
 
-	if userName == "" || b.token == "" {
-		return &BotError{time.Now(), "no user information. please refresh cookies or parser"}
+	if userName == "" || token == "" {
+		return "", &BotError{time.Now(), "no user information. please refresh cookies or parser"}
 	}
 
-	stdlog.Printf("receive info [user:%s][pts:%d]\n", userName, points)
-
-	b.gamesWon = make([]uint64, 0)
-	if b.currentDocument.Find("div.nav__notification").First() != nil { // won something
-		b.currentDocument.Find("div.table__row-inner-wrap").Each(func(_ int, s *goquery.Selection) {
-			if s.Find("div[class='table__gift-feedback-received is-hidden']").Size() != 0 &&
-									s.Find("div.table__gift-feedback-not-received").Size() == 0 {
-				// steam id
-				steamid, _ := s.Find("a.table_image_thumbnail").First().Attr("style")
-				// background-image:url(https://steamcdn-a.akamaihd.net/steam/apps/265930/capsule_184x69.jpg); - [5]
-				n, _ := strconv.ParseUint(strings.Split(steamid, "/")[5], 10, 64)
-
-				b.gamesWon = append(b.gamesWon, n)
-			}
-		})
-	}
-
-	if len(b.gamesWon) > 0 {
-		stdlog.Println("you've won", b.gamesWon)
-	}
-
-	return nil
+	return token, nil
 }
 
-func (b *TheBot) checkWonList(gid uint64) bool {
-	if len(b.gamesWon) == 0 {
-		return false
-	}
-
-	for _, v := range b.gamesWon {
-		if v == gid {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-	_, doc, err := b.getPageCustom(baseURL + path)
-	if err != nil {
-		return true, err
-	}
-
-	sel := doc.Find("div.widget-container")
-	if sel.Size() == 0 {
-		return true, &BotError{time.Now(), "strange page " + path}
-	}
-
-	sel = doc.Find("div.sidebar__error")
-	if sel.Size() != 0 {
-		return false, &BotError{time.Now(), "not enough points"}
-	}
-
-	sel = doc.Find("div.sidebar__entry-insert")
-	// no buttons - exist or not enough points
-	if sel.Size() == 0 {
-		return false, nil
-	}
-
-	// skip already entered
-	result := true
-	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
-		class, _ := s.Attr("class")
-		result = !strings.Contains(class, "is-hidden")
-		return result
-	})
-
-	return result, nil
-}
-
-func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
+func (b *TheBot) enterGiveaway(game GiveAway, token string) (status bool, err error) {
 	params := url.Values{}
-	params.Add("xsrf_token", b.token)
+	params.Add("xsrf_token", token)
 	params.Add("code", game.SGID)
 	params.Add("do", "entry_insert")
 
@@ -445,18 +356,11 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 		if strings.Contains(x, "/sub/") { // parse sub page
 			stdlog.Println("parse 'sub' giveaway", x)
-			_, subDoc, err := b.getPageCustom(x)
+			subDoc, err := fetchSteamPage(x)
 			if err != nil {
 				errlog.Println("can't get page", x)
 				return
 			}
-
-			// doc := subDoc.Find("html")
-			// html, eee := doc.Html()
-			// if eee != nil {
-			// 	log.Fatal(err)
-			// }
-			// stdlog.Printf("[[[[%s]]]]", html)
 
 			subDoc.Find("div.tab_item").EachWithBreak(func(subIdx int, subs *goquery.Selection) bool {
 				subID, subOk := subs.Attr("data-ds-appid")
@@ -469,11 +373,6 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 				_, ok := b.gamesWhitelist[gid]
 				if !ok {
 					// stdlog.Println("skip giveaway by whitelist", gid)
-					return true
-				}
-
-				if b.checkWonList(gid) {
-					// stdlog.Println("skip - already won! receve your gift!")
 					return true
 				}
 
@@ -497,11 +396,6 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 				return
 			}
 
-			if b.checkWonList(gid) {
-				// stdlog.Println("skip - already won! receve your gift!")
-				return
-			}
-
 			// add nanoseconds to split giveaways which will be ended at one time
 			giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
 		}
@@ -511,7 +405,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 	return giveaways
 }
 
-func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (count, entries int) {
+func (b *TheBot) processGiveaways(giveaways []GiveAway, token string, period time.Duration) (entries int) {
 	if len(giveaways) == 0 {
 		return
 	}
@@ -529,32 +423,19 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			break
 		}
 
-		status, err := b.getGiveawayStatus(game.URL)
-		if err != nil {
-			stdlog.Println(err)
-			if !status { // not enough points
-				break
-			}
-		}
-
-		if !status {
-			continue
-		}
-
 		// add some human behaviour - pause bot for a few seconds (1-3)
 		d := time.Second * time.Duration(rand.Intn(3) + 1)
 		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
-		status, err = b.enterGiveaway(game)
+		status, err := b.enterGiveaway(game, token)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
 		}
 		if !status {
 			stdlog.Printf("external error when enter for [%+v]. wait\n", game)
-			count = count + 1
 			break
 		}
 		duration := game.Time.Sub(time.Now())
@@ -567,48 +448,57 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 		entries = entries + 1
 	}
 
-	return count, entries
+	return entries
 }
 
-func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, err error) {
+func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (err error) {
 	b.gamesWhitelist = externalGamesList
 	err = b.getSteamLists()
 	if err != nil {
-		return 0, err
+		return
 	}
 
 	if len(b.gamesWhitelist) == 0 {
 		stdlog.Println("there is no game you want to win, please add some in json list or steam account. bye")
-		return 0, errors.New("math: square root of negative number")
-	}
-
-	err = b.getPage("/")
-	if err != nil {
-		return 0, err
+		return errors.New("empty white list")
 	}
 
 	stdlog.Println("check wishlist")
-	_, doc, err := b.getPageCustom(baseURL + sgWishlistURL)
+	doc, err := b.getPageCustom(baseURL + sgWishlistURL)
 	if err != nil {
-		return 0, err
+		return
 	}
+	token, err := b.getToken(doc)
+	if err != nil {
+		return
+	}
+
 	giveaways := b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	count, entriesWishlist := b.processGiveaways(giveaways, time.Hour * 24 * 7 * 5) // 5 weeks - all
+	entriesWishlist := b.processGiveaways(giveaways, token, time.Hour * 24 * 7 * 5) // 5 weeks - all
 	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
-	giveaways = b.getGiveaways(b.currentDocument)
+	doc, err = b.getPageCustom(baseURL)
+	if err != nil {
+		return
+	}
+	token, err = b.getToken(doc)
+	if err != nil {
+		return
+	}
+
+	giveaways = b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
+	entriesMainPage := b.processGiveaways(giveaways, token, time.Hour)
 
-	defer stdlog.Println("processed giveaways", entriesWishlist + entriesMainPage)
+	defer stdlog.Printf("processed giveaways (w: %d, m: %d)", entriesWishlist, entriesMainPage)
 
-	return count, nil
+	return nil
 }
 
 func (b *TheBot) addDigest(msg string) {
-	b.enteredGiveAways = append(b.enteredGiveAways, msg)
+	b.digest = append(b.digest, msg)
 }
 
 func init() {

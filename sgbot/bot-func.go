@@ -28,7 +28,8 @@ type Game struct {
 
 type Request struct {
 	SteamProfile string   `json:"profile"`
-	SteamAPIKey  string   `json:"key"`
+	SteamAPIKey  string   `json:"steam_key"`
+	ZenrowAPIKey string   `json:"zenrow_key"`
 	Cookies      []Cookie `json:"cookies"`
 	Games        []Game   `json:"games"`
 }
@@ -51,20 +52,15 @@ func populateGames(games []Game) (mapped map[uint64]bool) {
 
 // Check - check page and enter for gifts (repeat by timeout)
 func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
-	err = b.getUserInfo()
-	if err != nil {
-		return
-	}
-
 	defer fmt.Println("bot check finished")
 
-	_, err = b.parseGiveaways(games)
-	return b.enteredGiveAways, err
+	err = b.parseGiveaways(games)
+	return b.digest, err
 }
 
 func RunBot(botRequest *Request) (digest []string, err error) {
 	bot := &TheBot{}
-	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey)
+	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey, botRequest.ZenrowAPIKey)
 	if err != nil {
 		fmt.Println("error during bot initialization.", err)
 		return
@@ -82,6 +78,8 @@ func RunBot(botRequest *Request) (digest []string, err error) {
 
 // Requirements for execution:
 // Set STEAM_PROFILE environment variable as your steam profile id (https://steamcommunity.com/id/<profile>/)
+// Set STEAM_API_KEY environment variable for Steam API key (for wishlist downloading)
+// Set ZENROW_KEY environment variable for scraping steamgifts page
 // YDB connection:
 // Set YDB_DATABASE : a name for YDB (shown in yandex cloud console)
 func RunSGBOTFunc(ctx context.Context) (*Response, error) {
@@ -115,6 +113,7 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	var r Request
 	r.SteamProfile = os.Getenv("STEAM_PROFILE")
 	r.SteamAPIKey = os.Getenv("STEAM_API_KEY")
+	r.ZenrowAPIKey = os.Getenv("ZENROW_KEY")
 
 	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(

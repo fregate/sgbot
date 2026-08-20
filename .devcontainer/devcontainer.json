@@ -1,0 +1,29 @@
+{
+    "name": "Go 1.23 + chromedp",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+
+    "workspaceFolder": "/workspace",
+
+    "remoteUser": "root",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.Go",
+                "ms-azuretools.vscode-docker"
+            ],
+            "settings": {
+                "go.useLanguageServer": true,
+                "go.toolsManagement.autoUpdate": true,
+                "go.testFlags": [
+                    "-v"
+                ]
+            }
+        }
+    },
+    "mounts": [
+        "source=${localWorkspaceFolder},target=/workspace,type=bind"
+    ]
+}
