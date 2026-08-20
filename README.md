@@ -29,7 +29,7 @@ Frankly, there is 3 cloud functions: bot which checks, email sender and script w
 1. Run `yandex.sgbot-func.deploy.sh` - it prepares all mandatory files
 2. Create function from zip archive, choose Go/1.17, set 128M, 60sec timeout, set `bot-func.RunSGBOTFunc` as entry point
 3. Create service account with editor privelegies for YDB
-4. Set `STEAM_PROFILE`, `STEAM_API_KEY` and `YDB_DATABASE` (this is location from YDB) environment variables
+4. Set `STEAM_PROFILE`, `STEAM_API_KEY`, `ZENROW_KEY` (this is for zenrows.com api to fetch SG pages instead of cloudfare protection) and `YDB_DATABASE` (this is location from YDB) environment variables
 5. Finish function creation
 6. Create trigger for schedule function invokation (hourly - but you can check as you wish)
 7. Create service account (or add to existing serverless.invoker role)
