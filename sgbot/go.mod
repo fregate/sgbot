@@ -6,11 +6,8 @@ toolchain go1.23.12
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0
-	github.com/abbot/go-http-auth v0.4.0
-	github.com/takama/daemon v1.0.0
 	github.com/yandex-cloud/go-sdk v0.0.0-20220504074640-ff8f2ace74af
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.25.0
-	golang.org/x/crypto v0.28.0
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
