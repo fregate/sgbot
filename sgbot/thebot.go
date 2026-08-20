@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,39 +43,6 @@ type GiveAway struct {
 	Time time.Time
 }
 
-// By is the type of a "less" function that defines the ordering of its Time arguments.
-// time sorter function
-type By func(p1, p2 *GiveAway) bool
-
-func (by By) sortGAs(entries []GiveAway) {
-	ps := &timeSorter{
-		entries: entries,
-		by:      by, // The Sort method's receiver is the function (closure) that defines the sort order.
-	}
-	sort.Sort(ps)
-}
-
-// timeSorter joins a By function and a slice of Time to be sorted.
-type timeSorter struct {
-	entries []GiveAway
-	by      func(p1, p2 *GiveAway) bool // Closure used in the Less method.
-}
-
-// Len is part of sort.Interface.
-func (s *timeSorter) Len() int {
-	return len(s.entries)
-}
-
-// Swap is part of sort.Interface.
-func (s *timeSorter) Swap(i, j int) {
-	s.entries[i], s.entries[j] = s.entries[j], s.entries[i]
-}
-
-// Less is part of sort.Interface. It is implemented by calling the "by" closure in the sorter.
-func (s *timeSorter) Less(i, j int) bool {
-	return s.by(&s.entries[i], &s.entries[j])
-}
-
 // {"type":"success","entry_count":"108","points":"147"}
 type postResponse struct {
 	Type    string `json:"type"`
@@ -87,9 +54,12 @@ const (
 	baseURL             string = "https://www.steamgifts.com"
 	sgWishlistURL       string = "/giveaways/search?type=wishlist"
 	sgAccountInfo       string = "/giveaways/won"
-	baseSteamProfileURL string = "https://steamcommunity.com/profiles/"
-	steamFollowed       string = "/followedgames/"
+	steamProfileURL     string = "https://steamcommunity.com/profiles/%s/followedgames/"
 )
+
+type ApiResponse[T any] struct {
+	Resp T	`json:"response"`
+}
 
 // TheBot class for work with SteamGifts pages
 type TheBot struct {
@@ -111,15 +81,9 @@ type TheBot struct {
 	enteredGiveAways []string
 }
 
-func (b *TheBot) clean() {
-	b.token = ""
-	// b.currentURL = ""
-}
-
 // InitBot initilize bot fields, load configs
 func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey string) error {
-	b.clean()
-
+	b.token = ""
 	b.steamID = steamProfile
 	b.steamAPIKey = steamAPIKey
 	b.gamesWhitelist = make(map[uint64]bool)
@@ -130,21 +94,44 @@ func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey 
 	return nil
 }
 
-type GameInfo struct {
-	AppID     uint64 `json:"appid"`
-	Priority  int `json:"priority"`
-	DateAdded int `json:"added"`
+func fetchFollowedList(steamID string, apiKey string) (map[uint64]bool, error) {
+	url := fmt.Sprintf("https://api.steampowered.com/IStoreService/GetGamesFollowed/v1/?id=%s&steamid=%s", apiKey, steamID)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed process request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
+	}
+
+	type Items struct {
+		Items []uint64	`json:"appids"`
+	}
+
+	games := ApiResponse[Items]{}
+	err = json.Unmarshal(answer, &games)
+	if err != nil {
+		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
+	}
+
+	out := make(map[uint64]bool)
+	for _, app := range games.Resp.Items {
+		out[app] = true
+	}
+
+	return out, nil
 }
 
-type WishlistItems struct {
-	Items []GameInfo	`json:"items"`
-}
-
-type WishlistGames struct {
-	Resp WishlistItems	`json:"response"`
-}
-
-func fetchWishlist(steamID string, apiKey string) ([]GameInfo, error) {
+func fetchWishlist(steamID string, apiKey string) (map[uint64]bool, error) {
 	url := fmt.Sprintf("https://api.steampowered.com/IWishlistService/GetWishlist/v1?id=%s&steamid=%s", apiKey, steamID)
 
 	resp, err := http.Get(url)
@@ -163,13 +150,48 @@ func fetchWishlist(steamID string, apiKey string) ([]GameInfo, error) {
 		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
 	}
 
-	games := WishlistGames{}
+	type GameInfo struct {
+		AppID     uint64 `json:"appid"`
+		Priority  int    `json:"priority"`
+		DateAdded int    `json:"added"`
+	}
+
+	type WishlistItems struct {
+		Items []GameInfo	`json:"items"`
+	}
+
+	games := ApiResponse[WishlistItems]{}
 	err = json.Unmarshal(answer, &games)
 	if err != nil {
 		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
 	}
 
-	return games.Resp.Items, nil
+	out := make(map[uint64]bool)
+	for _, app := range games.Resp.Items {
+		out[app.AppID] = true
+	}
+
+	return out, nil
+}
+
+func fetchSteamPage(url string) (retDoc *goquery.Document, err error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed process request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	answer, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
+	}
+
+	return goquery.NewDocumentFromReader(bytes.NewReader(answer))
 }
 
 func (b *TheBot) getSteamLists() (err error) {
@@ -185,23 +207,16 @@ func (b *TheBot) getSteamLists() (err error) {
 	}
 
 	stdlog.Println("wishlist entries", len(wg))
-	for _, game := range wg {
-		b.gamesWhitelist[game.AppID] = true
-	}
+	maps.Copy(b.gamesWhitelist, wg)
 
 	// parse followed games entries
-	doc, err := b.getPageCustom(baseSteamProfileURL + b.steamID + steamFollowed)
+	wg, err = fetchFollowedList(b.steamID, b.steamAPIKey)
 	if err != nil {
 		stdlog.Println("can't fetch followed games", err)
 		return &BotError{time.Now(), "can't fetch followed games"}
 	}
-	followed := doc.Find("div[data-appid]")
-	stdlog.Println("followed games entries", followed.Size())
-	followed.Each(func(_ int, s *goquery.Selection) {
-		id, _ := s.Attr("data-appid")
-		numID, _ := strconv.ParseUint(id, 10, 64)
-		b.gamesWhitelist[numID] = true
-	})
+	stdlog.Println("followed entries", len(wg))
+	maps.Copy(b.gamesWhitelist, wg)
 
 	stdlog.Println("steam profile parsed successfully")
 	return nil
@@ -351,44 +366,7 @@ func (b *TheBot) checkWonList(gid uint64) bool {
 	return false
 }
 
-func (b *TheBot) getGiveawayStatus(path string) (status bool, err error) {
-	doc, err := b.getPageCustom(baseURL + path)
-	if err != nil {
-		return true, err
-	}
-
-	sel := doc.Find("div.widget-container")
-	if sel.Size() == 0 {
-		return true, &BotError{time.Now(), "strange page " + path}
-	}
-
-	sel = doc.Find("div.sidebar__error")
-	if sel.Size() != 0 {
-		return false, &BotError{time.Now(), "not enough points"}
-	}
-
-	sel = doc.Find("div.sidebar__entry-insert")
-	// no buttons - exist or not enough points
-	if sel.Size() == 0 {
-		return false, nil
-	}
-
-	// skip already entered
-	result := true
-	sel.EachWithBreak(func(i int, s *goquery.Selection) bool {
-		class, _ := s.Attr("class")
-		result = !strings.Contains(class, "is-hidden")
-		return result
-	})
-
-	return result, nil
-}
-
 func (b *TheBot) enterGiveaway(game GiveAway) (status bool, err error) {
-	// params := map[string]string{
-	// 	"xsrf_token" : b.token,
-	// 	"code": game.SGID,
-	// 	"do": "entry_insert"}
 	params := url.Values{}
 	params.Add("xsrf_token", b.token)
 	params.Add("code", game.SGID)
@@ -429,18 +407,11 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 		if strings.Contains(x, "/sub/") { // parse sub page
 			stdlog.Println("parse 'sub' giveaway", x)
-			subDoc, err := b.getPageCustom(x)
+			subDoc, err := fetchSteamPage(x)
 			if err != nil {
 				errlog.Println("can't get page", x)
 				return
 			}
-
-			// doc := subDoc.Find("html")
-			// html, eee := doc.Html()
-			// if eee != nil {
-			// 	log.Fatal(err)
-			// }
-			// stdlog.Printf("[[[[%s]]]]", html)
 
 			subDoc.Find("div.tab_item").EachWithBreak(func(subIdx int, subs *goquery.Selection) bool {
 				subID, subOk := subs.Attr("data-ds-appid")
@@ -513,25 +484,13 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, period time.Duration) (c
 			break
 		}
 
-		status, err := b.getGiveawayStatus(game.URL)
-		if err != nil {
-			stdlog.Println(err)
-			if !status { // not enough points
-				break
-			}
-		}
-
-		if !status {
-			continue
-		}
-
 		// add some human behaviour - pause bot for a few seconds (1-3)
 		d := time.Second * time.Duration(rand.Intn(3) + 1)
 		if game.Time.After(time.Now().Add(d)) {
 			time.Sleep(d)
 		}
 
-		status, err = b.enterGiveaway(game)
+		status, err := b.enterGiveaway(game)
 		if err != nil {
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
@@ -577,13 +536,17 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (count int, e
 	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
+	doc, err = b.getPageCustom(baseURL)
+	if err != nil {
+		return 0, err
+	}
 	giveaways = b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
 	count, entriesMainPage := b.processGiveaways(giveaways, time.Hour)
 
-	defer stdlog.Println("processed giveaways", entriesWishlist + entriesMainPage)
+	defer stdlog.Printf("processed giveaways (w: %d, m: %d)", entriesWishlist, entriesMainPage)
 
-	return count, nil
+	return entriesWishlist + entriesMainPage, nil
 }
 
 func (b *TheBot) addDigest(msg string) {
