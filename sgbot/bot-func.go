@@ -52,15 +52,10 @@ func populateGames(games []Game) (mapped map[uint64]bool) {
 
 // Check - check page and enter for gifts (repeat by timeout)
 func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
-	err = b.getUserInfo()
-	if err != nil {
-		return
-	}
-
 	defer fmt.Println("bot check finished")
 
-	_, err = b.parseGiveaways(games)
-	return b.enteredGiveAways, err
+	err = b.parseGiveaways(games)
+	return b.digest, err
 }
 
 func RunBot(botRequest *Request) (digest []string, err error) {
