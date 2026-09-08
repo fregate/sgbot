@@ -31,13 +31,20 @@ Frankly, there is 3 cloud functions: bot which checks, email sender and script w
 3. Create service account with editor privelegies for YDB
 4. Set `YDB_DATABASE` (this is location from YDB) environment variables
 5. Finish function creation
-6. Run function once (test). It has to create 3 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)` and `digest (message:UTF8)`
+6. Run function once (test). It has to create 4 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:UTF8)` and `keys (id:uint64, name:string, value:string)`
+
+### Fill the `keys` table
+The bot reads its Zenrows API key from the `keys` table (not from an environment variable). Insert one row per Zenrows key, all with `name = 'zenrows'`:
+```sql
+INSERT INTO keys (id, name, value) VALUES (1, 'zenrows', '<your Zenrows API key>');
+```
+Right now the bot takes only the first `zenrows` key it reads, so put the key you want to use first; adding more `zenrows` rows is the groundwork for key rotation later.
 
 ### Create bot function
 1. Run `yandex.sgbot-func.deploy.sh` - it prepares all mandatory files
 2. Create function from zip archive, choose Go/1.17, set 128M, 60sec timeout, set `bot-func.RunSGBOTFunc` as entry point
 3. Create service account with editor privelegies for YDB
-4. Set `STEAM_PROFILE`, `STEAM_API_KEY`, `ZENROW_KEY` (this is for zenrows.com api to fetch SG pages instead of cloudfare protection) and `YDB_DATABASE` (this is location from YDB) environment variables
+4. Set `STEAM_PROFILE`, `STEAM_API_KEY` and `YDB_DATABASE` (this is location from YDB) environment variables. The Zenrows key is no longer an environment variable - the bot reads it from the `keys` table (see "Fill the `keys` table" above)
 5. Finish function creation
 6. Create trigger for schedule function invokation (hourly - but you can check as you wish)
 7. Create service account (or add to existing serverless.invoker role)
