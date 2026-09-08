@@ -79,7 +79,7 @@ func RunBot(botRequest *Request) (digest []string, err error) {
 // Requirements for execution:
 // Set STEAM_PROFILE environment variable as your steam profile id (https://steamcommunity.com/id/<profile>/)
 // Set STEAM_API_KEY environment variable for Steam API key (for wishlist downloading)
-// Set ZENROW_KEY environment variable for scraping steamgifts page
+// Set the 'zenrows' row in the 'keys' table (value column) for scraping steamgifts page
 // YDB connection:
 // Set YDB_DATABASE : a name for YDB (shown in yandex cloud console)
 func RunSGBOTFunc(ctx context.Context) (*Response, error) {
@@ -108,12 +108,11 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	}
 	defer func() { _ = db.Close(connectCtx) }()
 
-	// get games, cookies from db
+	// get games, cookies and keys from db
 	// make request suited for checking
 	var r Request
 	r.SteamProfile = os.Getenv("STEAM_PROFILE")
 	r.SteamAPIKey = os.Getenv("STEAM_API_KEY")
-	r.ZenrowAPIKey = os.Getenv("ZENROW_KEY")
 
 	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
 		txc := table.TxControl(
@@ -176,6 +175,35 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 			fmt.Println(len(r.Games), "games added")
 		} else {
 			fmt.Printf("can't select from 'game' table. %v", err)
+		}
+
+		// read zenrows key
+		_, res, err = session.Execute(ctxSession, txc,
+			`--!syntax_v1
+			SELECT value FROM keys WHERE name = 'zenrows'
+			`,
+			nil,
+		)
+		if err == nil {
+			rows:
+			for res.NextResultSet(ctxSession) {
+				for res.NextRow() {
+					var keyValue string
+					err := res.ScanNamed(
+						named.OptionalWithDefault("value", &keyValue))
+					if err != nil {
+						fmt.Printf("error parsing key row. %v", err)
+						continue
+					}
+					r.ZenrowAPIKey = keyValue
+					break rows
+				}
+			}
+			res.Close()
+			fmt.Println("zenrows key added")
+		} else {
+			fmt.Printf("can't select from 'keys' table. %v", err)
+			return
 		}
 		return
 	})

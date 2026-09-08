@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path"
 	"time"
 
 	yc "github.com/yandex-cloud/go-sdk"
 	ycsdk "github.com/ydb-platform/ydb-go-sdk/v3"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/options"
-	"github.com/ydb-platform/ydb-go-sdk/v3/table/types"
+	"github.com/ydb-platform/ydb-go-sdk/v3/query"
 )
 
 // Requirements for execution:
@@ -41,39 +38,54 @@ func RunInitBotDB(ctx context.Context) (*Response, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ydb connect error: %w", err)
 	}
-	defer func() { _ = db.Close(connectCtx) }()
+	defer db.Close(connectCtx)
 
-	err = db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err error) {
-		// create games table
-		err = session.CreateTable(ctxSession, path.Join(db.Name(), "games"),
-			options.WithColumn("id", types.Optional(types.TypeUint64)),
-			options.WithColumn("name", types.Optional(types.TypeString)),
-			options.WithPrimaryKeyColumn("id"),
-		)
-		if err != nil {
-			return
-		}
+	err = db.Query().Exec(connectCtx,
+		`CREATE TABLE IF NOT EXISTS games (
+			id Uint64,
+			name Utf8,
+			PRIMARY KEY(id)
+		)`,
+		query.WithTxControl(query.NoTx()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("can't prepare db. %v", err)
+	}
 
-		// create cookies table
-		err = session.CreateTable(ctxSession, path.Join(db.Name(), "cookies"),
-			options.WithColumn("name", types.Optional(types.TypeString)),
-			options.WithColumn("value", types.Optional(types.TypeString)),
-			options.WithColumn("domain", types.Optional(types.TypeString)),
-			options.WithColumn("path", types.Optional(types.TypeString)),
-			options.WithPrimaryKeyColumn("name"),
-		)
-		if err != nil {
-			return
-		}
+	err = db.Query().Exec(connectCtx,
+		`CREATE TABLE IF NOT EXISTS cookies (
+			name Utf8,
+			value Utf8,
+			domain Utf8,
+			path Utf8,
+			PRIMARY KEY(name, domain)
+		)`,
+		query.WithTxControl(query.NoTx()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("can't prepare db. %v", err)
+	}
 
-		// create digest table
-		err = session.CreateTable(ctxSession, path.Join(db.Name(), "digest"),
-			options.WithColumn("message", types.Optional(types.TypeUTF8)),
-			options.WithPrimaryKeyColumn("message"),
-		)
+	err = db.Query().Exec(connectCtx,
+		`CREATE TABLE IF NOT EXISTS digest (
+			message Utf8,
+			PRIMARY KEY(message)
+		)`,
+		query.WithTxControl(query.NoTx()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("can't prepare db. %v", err)
+	}
 
-		return
-	})
+	err = db.Query().Exec(connectCtx,
+		`CREATE TABLE IF NOT EXISTS keys (
+			id Uint64,
+			type Utf8,
+			value Utf8,
+			PRIMARY KEY(id)
+		)`,
+		query.WithTxControl(query.NoTx()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("can't prepare db. %v", err)
 	}
