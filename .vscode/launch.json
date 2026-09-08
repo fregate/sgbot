@@ -5,6 +5,14 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
+			"name": "Launch checkdp",
+			"type": "go",
+			"request": "launch",
+			"mode": "auto",
+			"program": "${workspaceFolder}/checkdp/",
+			"cwd": "${workspaceFolder}/checkdp"
+		},
+		{
 			"name": "Launch bot manual trigger",
 			"type": "go",
 			"request": "launch",

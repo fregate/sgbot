@@ -9,6 +9,14 @@ This is my first project in GO (and there no some goish features like channels a
 This is python implementation which inspired me to do this
 https://github.com/theWaR13/SteamGiveawayManager
 
+## tools/fg.py - narrow your whitelist
+
+A standalone Python helper (`python3 tools/fg.py <steam-profile>`, needs `requests_html`) that fetches your followed-games list and, per game, checks the Steam store rating and the SteamDB rating. It prints two lists: games worth *removing* from followed (low SteamDB rating or low Steam rating) and games worth *promoting* from followed to wishlist (top ratings). Use it to trim the whitelist the bot enters giveaways for. It is not called by any Go code.
+
+## For agents working in this repo
+
+See [AGENTS.md](AGENTS.md) - it documents the repo layout, the cloud-function deploy gotchas (each function is a zip with a hardcoded file list), and the host constraints (no Go toolchain, tests are live E2E and must not be run casually).
+
 ## SGBot as a cloud function
 If you have some cloud functions service (AWS Lambda, Yandex.Cloud, _etc_) you could try to install this bot as cloud function. At this point you can install it on Yandex.Cloud (as I did).
 Frankly, there is 3 cloud functions: bot which checks, email sender and script with db seeding.
@@ -36,7 +44,7 @@ Frankly, there is 3 cloud functions: bot which checks, email sender and script w
 8. It has to work!
 
 ### Create digest function
-1. Run `yandex.digest-bot.deploy.sh` - it prepares all mandatory files
+1. Run `yandex.digest-func.deploy.sh` - it prepares all mandatory files
 2. Create function from zip archive, choose Go/1.17, set 128M, 5sec timeout, set `digest-func.SendDigest` as entry point
 3. Create service account with editor privelegies for YDB (or use existing)
 4. Set `MAILER_SMTP`, `MAILER_PORT`, `MAILER_AUTH_NAME`, `MAILER_AUTH_PWD`, `MAILER_SUBJECT`, `MAILER_RECIPIENT` environment variables for mailer creation and `YDB_DATABASE` for DB connection
@@ -67,7 +75,7 @@ Bot writes something to log in 2 cases: first, if you won something, and second 
 
 # External imports
 * https://github.com/PuerkitoBio/goquery - useful jquery-like selectors for HTML documents
-* https://github.com/takama/daemon - golang daemon
 * http://gopkg.in/gomail.v2 - mailer for spam
+* https://github.com/zenrows/zenrows-go-sdk - fetch SG pages through the ZenRows API (bypasses Cloudflare)
 * https://github.com/yandex-cloud/go-sdk - using as cloud function
 * https://github.com/ydb-platform/ydb-go-sdk - store data for cloud function
