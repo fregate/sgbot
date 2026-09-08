@@ -180,7 +180,7 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 		// read zenrows key
 		_, res, err = session.Execute(ctxSession, txc,
 			`--!syntax_v1
-			SELECT value FROM keys WHERE name = 'zenrows'
+			SELECT value FROM keys WHERE type = 'zenrows'
 			`,
 			nil,
 		)

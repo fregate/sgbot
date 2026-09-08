@@ -1,11 +1,11 @@
 module sgbot.mem4.me/sgbot
 
-go 1.23.9
+go 1.23
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0
 	github.com/yandex-cloud/go-sdk v0.0.0-20220504074640-ff8f2ace74af
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.127.6
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.116.4
 	gopkg.in/gomail.v2 v2.0.0-20160411212932-81ebce5c23df
 )
 
@@ -16,6 +16,7 @@ require (
 	github.com/gorilla/schema v1.4.1 // indirect
 	github.com/hashicorp/go-version v1.7.0 // indirect
 	github.com/jonboulle/clockwork v0.5.0 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	golang.org/x/sync v0.12.0 // indirect
 )
 
@@ -23,7 +24,6 @@ require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.0.0 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20220504074248-8eb1dc1d2610 // indirect
