@@ -5,6 +5,14 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
+			"name": "Run fg.py",
+			"type": "debugpy",
+			"request": "launch",
+			"program": "tools/fg.py",
+			"console": "integratedTerminal",
+			"args": []
+		},
+		{
 			"name": "Launch checkdp",
 			"type": "go",
 			"request": "launch",
