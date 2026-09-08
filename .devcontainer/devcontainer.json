@@ -1,5 +1,5 @@
 {
-    "name": "Go 1.23 + chromedp",
+    "name": "Go 1.23",
     "build": {
         "dockerfile": "Dockerfile"
     },
