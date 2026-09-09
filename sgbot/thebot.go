@@ -170,6 +170,7 @@ type TheBot struct {
 	// keys and auth
 	steamID string
 	steamAPIKey string
+	zenrowsKeys *Rotor
 
 	// games
 	gamesWhitelist map[uint64]bool
@@ -179,13 +180,19 @@ type TheBot struct {
 }
 
 // InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey string) error {
+func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKeys []string) error {
 	b.steamID = steamProfile
 	b.steamAPIKey = steamAPIKey
 	b.gamesWhitelist = make(map[uint64]bool)
 	b.digest = make([]string, 0)
 
-	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(zenrowsAPIKey))
+	// all zenrows keys from the db go into the rotor,
+	// for now only the current (first) one is used
+	b.zenrowsKeys, err := NewRotor(zenrowsAPIKeys)
+	if err != nil {
+		return fmt.Errorf("can't create zenrows keys rotor: %v", err)
+	}
+	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(b.zenrowsKeys.Value()))
 
 	return nil
 }
