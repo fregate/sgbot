@@ -146,7 +146,12 @@ func fetchWishlist(steamID string, apiKey string) (map[uint64]bool, error) {
 	return out, nil
 }
 
-func fetchSteamPage(url string) (retDoc *goquery.Document, err error) {
+// fetchSteamPackApps returns the app ids included in a steam store
+// package (sub/PACKID page) using the storefront packagedetails api
+// instead of parsing the sub page html.
+func fetchSteamPackApps(packID string) ([]uint64, error) {
+	url := fmt.Sprintf("https://store.steampowered.com/api/packagedetails?packageids=%s", packID)
+
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("failed process request: %v", err)
@@ -163,7 +168,36 @@ func fetchSteamPage(url string) (retDoc *goquery.Document, err error) {
 		return nil, fmt.Errorf("can't read body: %d", resp.StatusCode)
 	}
 
-	return goquery.NewDocumentFromReader(bytes.NewReader(answer))
+	type PackApp struct {
+		ID uint64 `json:"id"`
+	}
+
+	type PackData struct {
+		Apps []PackApp `json:"apps"`
+	}
+
+	type Pack struct {
+		Success bool      `json:"success"`
+		Data    *PackData `json:"data"`
+	}
+
+	// the api answer is a map keyed by the requested package id
+	packs := make(map[string]Pack)
+	if err := json.Unmarshal(answer, &packs); err != nil {
+		return nil, fmt.Errorf("failed unmarshall json response: %v", err)
+	}
+
+	pack, ok := packs[packID]
+	if !ok || !pack.Success || pack.Data == nil {
+		return nil, fmt.Errorf("no app list for pack %s", packID)
+	}
+
+	apps := make([]uint64, 0, len(pack.Data.Apps))
+	for _, a := range pack.Data.Apps {
+		apps = append(apps, a.ID)
+	}
+
+	return apps, nil
 }
 
 // isAuth004 reports whether a scrapeapi answer is a zenrows 402/AUTH004
@@ -408,31 +442,32 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 
 		if strings.Contains(x, "/sub/") { // parse sub page
 			stdlog.Println("parse 'sub' giveaway", x)
-			subDoc, err := fetchSteamPage(x)
-			if err != nil {
-				errlog.Println("can't get page", x)
+			// get steam pack id from the sub page url
+			strpack := re.FindAllString(x, -1)
+			if len(strpack) == 0 {
+				stdlog.Println("skip giveaway - can't find pack id", x)
 				return
 			}
 
-			subDoc.Find("div.tab_item").EachWithBreak(func(subIdx int, subs *goquery.Selection) bool {
-				subID, subOk := subs.Attr("data-ds-appid")
-				if !subOk {
-					return true
-				}
+			// ask the storefront api for the apps the pack contains
+			apps, err := fetchSteamPackApps(strpack[0])
+			if err != nil {
+				errlog.Println("can't get pack apps", x, err)
+				return
+			}
 
-				gid, _ := strconv.ParseUint(subID, 10, 64)
-
+			for _, gid := range apps {
 				_, ok := b.gamesWhitelist[gid]
 				if !ok {
 					// stdlog.Println("skip giveaway by whitelist", gid)
-					return true
+					continue
 				}
 
-				// add nanoseconds to split giveaways which will be ended at one time
+				// add nanoseconds to split giveaways which will be ended on same time
 				giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
 				// stop parse sub page - we're decided to be in!
-				return false
-			})
+				break
+			}
 		} else { // parse single game GA
 			// get steam game id and check it whitelisted
 			strgid := re.FindAllString(x, -1)
@@ -448,7 +483,7 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 				return
 			}
 
-			// add nanoseconds to split giveaways which will be ended at one time
+			// add nanoseconds to split giveaways which will be ended on same time
 			giveaways = append(giveaways, GiveAway{sgCode, gid, sgURL, game, time.Unix(t, 0)})
 		}
 	})
