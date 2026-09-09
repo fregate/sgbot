@@ -34,6 +34,11 @@ func (e *BotError) Error() string {
 	return fmt.Sprintf("at %v, %s", e.When, e.What)
 }
 
+// ErrKeysExhausted is returned when a scrapeapi answer is 402/AUTH004
+// (zenrows "usage exceeded") and there are no more keys to rotate to:
+// the bot has to stop in that case.
+var ErrKeysExhausted = errors.New("zenrows keys exhausted (402/AUTH004)")
+
 // GiveAway Definition of GA
 type GiveAway struct {
 	SGID string
@@ -161,6 +166,13 @@ func fetchSteamPage(url string) (retDoc *goquery.Document, err error) {
 	return goquery.NewDocumentFromReader(bytes.NewReader(answer))
 }
 
+// isAuth004 reports whether a scrapeapi answer is a zenrows 402/AUTH004
+// "usage exceeded" one: the current api key has spent its allowance and
+// the next key from the rotor has to be used instead.
+func isAuth004(status int, body []byte) bool {
+	return status == http.StatusPaymentRequired && strings.Contains(string(body), "AUTH004")
+}
+
 // TheBot class for work with SteamGifts pages
 type TheBot struct {
 	// client
@@ -170,6 +182,7 @@ type TheBot struct {
 	// keys and auth
 	steamID string
 	steamAPIKey string
+	zenrowsKeys *Rotor
 
 	// games
 	gamesWhitelist map[uint64]bool
@@ -179,14 +192,34 @@ type TheBot struct {
 }
 
 // InitBot initilize bot fields, load configs
-func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKey string) error {
+func (b *TheBot) InitBot(steamProfile string, steamAPIKey string, zenrowsAPIKeys []string) error {
 	b.steamID = steamProfile
 	b.steamAPIKey = steamAPIKey
 	b.gamesWhitelist = make(map[uint64]bool)
 	b.digest = make([]string, 0)
 
-	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(zenrowsAPIKey))
+	// all zenrows keys from the db go into the rotor,
+	// the first key is used until a 402/AUTH004 forces a rotation
+	keysRotor, err := NewRotor(zenrowsAPIKeys)
+	if err != nil {
+		return fmt.Errorf("can't create zenrows keys rotor: %v", err)
+	}
+	b.zenrowsKeys = keysRotor
+	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(b.zenrowsKeys.Value()))
 
+	return nil
+}
+
+// rotateKey moves the zenrows key rotor to the next key and recreates
+// the scrapeapi client with it. It returns an error when there are no
+// more rotations left: the bot has to stop in that case.
+func (b *TheBot) rotateKey() error {
+	if err := b.zenrowsKeys.Rotate(); err != nil {
+		return fmt.Errorf("can't rotate zenrows key: %v", err)
+	}
+
+	b.client = scraperapi.NewClient(scraperapi.WithAPIKey(b.zenrowsKeys.Value()))
+	stdlog.Println("zenrows key rotated, scrapeapi client recreated")
 	return nil
 }
 
@@ -241,27 +274,35 @@ func (b *TheBot) postRequest(path string, queryParams url.Values) (status bool, 
 		params.CustomHeaders.Add("Cookie", k.String())
 	}
 
-	resp, err := b.client.Post(
-		context.Background(),
-		pageURL.String(),
-		params,
-		queryParams.Encode())
-	if err != nil {
-		return
-	}
+	for {
+		resp, err := b.client.Post(
+			context.Background(),
+			pageURL.String(),
+			params,
+			queryParams.Encode())
+		if err != nil {
+			return false, err
+		}
 
-	stdlog.Println("giveaway post request answer", pageURL.String(), resp.StatusCode(), string(resp.Body()))
+		stdlog.Println("giveaway post request answer", pageURL.String(), resp.StatusCode(), string(resp.Body()))
 
-	r := postResponse{}
-
-	if resp.StatusCode() == http.StatusOK {
-		err = json.Unmarshal(resp.Body(), &r)
-		return r.Type == "success", err
-	} else if resp.StatusCode() == http.StatusUnprocessableEntity {
-		stdlog.Printf("internal error (%s)", resp.Body())
-		return true, nil
-	} else {
-		return false, nil
+		r := postResponse{}
+		if isAuth004(resp.StatusCode(), resp.Body()) {
+			stdlog.Println("zenrows 402/AUTH004 (usage exceeded) on", pageURL.String())
+			if err = b.rotateKey(); err != nil {
+				return false, ErrKeysExhausted
+			}
+			// retry the same request with the new key
+			continue
+		} else if resp.StatusCode() == http.StatusOK {
+			err = json.Unmarshal(resp.Body(), &r)
+			return r.Type == "success", err
+		} else if resp.StatusCode() == http.StatusUnprocessableEntity {
+			stdlog.Printf("internal error (%s)", resp.Body())
+			return true, nil
+		} else {
+			return false, nil
+		}
 	}
 }
 
@@ -285,12 +326,23 @@ func (b *TheBot) getPageCustom(uri string) (retDoc *goquery.Document, err error)
 		params.CustomHeaders.Add("Cookie", k.String())
 	}
 
-	resp, err := b.client.Get(context.Background(), pageURL.String(), params)
-	if err != nil {
-		return
-	}
+	for {
+		resp, err := b.client.Get(context.Background(), pageURL.String(), params)
+		if err != nil {
+			return nil, err
+		}
 
-	return goquery.NewDocumentFromReader(bytes.NewReader(resp.Body()))
+		if isAuth004(resp.StatusCode(), resp.Body()) {
+			stdlog.Println("zenrows 402/AUTH004 (usage exceeded) on", pageURL.String())
+			if err = b.rotateKey(); err != nil {
+				return nil, ErrKeysExhausted
+			}
+			// retry the same page with the new key
+			continue
+		}
+
+		return goquery.NewDocumentFromReader(bytes.NewReader(resp.Body()))
+	}
 }
 
 func (b *TheBot) parseToken(str string) string {
@@ -405,9 +457,9 @@ func (b *TheBot) getGiveaways(doc *goquery.Document) (giveaways []GiveAway) {
 	return giveaways
 }
 
-func (b *TheBot) processGiveaways(giveaways []GiveAway, token string, period time.Duration) (entries int) {
+func (b *TheBot) processGiveaways(giveaways []GiveAway, token string, period time.Duration) (entries int, err error) {
 	if len(giveaways) == 0 {
-		return
+		return 0, nil
 	}
 
 	// sort giveaways by time asc
@@ -431,6 +483,9 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, token string, period tim
 
 		status, err := b.enterGiveaway(game, token)
 		if err != nil {
+			if errors.Is(err, ErrKeysExhausted) {
+				return 0, err
+			}
 			stdlog.Printf("internal error (%s) when enter for [%+v]", err, game)
 			continue
 		}
@@ -448,7 +503,7 @@ func (b *TheBot) processGiveaways(giveaways []GiveAway, token string, period tim
 		entries = entries + 1
 	}
 
-	return entries
+	return entries, nil
 }
 
 func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (err error) {
@@ -475,7 +530,10 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (err error) {
 
 	giveaways := b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	entriesWishlist := b.processGiveaways(giveaways, token, time.Hour * 24 * 7 * 5) // 5 weeks - all
+	entriesWishlist, err := b.processGiveaways(giveaways, token, time.Hour * 24 * 7 * 5) // 5 weeks - all
+	if err != nil {
+		return
+	}
 	stdlog.Println("processed giveaways", entriesWishlist)
 
 	stdlog.Println("check main page")
@@ -490,7 +548,10 @@ func (b *TheBot) parseGiveaways(externalGamesList map[uint64]bool) (err error) {
 
 	giveaways = b.getGiveaways(doc)
 	stdlog.Println("found giveaways on page:", len(giveaways))
-	entriesMainPage := b.processGiveaways(giveaways, token, time.Hour)
+	entriesMainPage, err := b.processGiveaways(giveaways, token, time.Hour)
+	if err != nil {
+		return
+	}
 
 	defer stdlog.Printf("processed giveaways (w: %d, m: %d)", entriesWishlist, entriesMainPage)
 

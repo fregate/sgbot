@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	yc "github.com/yandex-cloud/go-sdk"
@@ -27,11 +28,11 @@ type Game struct {
 }
 
 type Request struct {
-	SteamProfile string   `json:"profile"`
-	SteamAPIKey  string   `json:"steam_key"`
-	ZenrowAPIKey string   `json:"zenrow_key"`
-	Cookies      []Cookie `json:"cookies"`
-	Games        []Game   `json:"games"`
+	SteamProfile  string   `json:"profile"`
+	SteamAPIKey   string   `json:"steam_key"`
+	ZenrowAPIKeys []string `json:"zenrow_keys"`
+	Cookies       []Cookie `json:"cookies"`
+	Games         []Game   `json:"games"`
 }
 
 func populateCookies(b *TheBot, botCookies []Cookie) {
@@ -58,9 +59,11 @@ func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
 	return b.digest, err
 }
 
-func RunBot(botRequest *Request) (digest []string, err error) {
-	bot := &TheBot{}
-	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey, botRequest.ZenrowAPIKey)
+// RunBot runs one bot check on the given bot. The caller keeps the bot
+// instance and can inspect it afterwards (for example the key rotor
+// state, to persist rotated zenrows keys).
+func RunBot(bot *TheBot, botRequest *Request) (digest []string, err error) {
+	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey, botRequest.ZenrowAPIKeys)
 	if err != nil {
 		fmt.Println("error during bot initialization.", err)
 		return
@@ -79,7 +82,7 @@ func RunBot(botRequest *Request) (digest []string, err error) {
 // Requirements for execution:
 // Set STEAM_PROFILE environment variable as your steam profile id (https://steamcommunity.com/id/<profile>/)
 // Set STEAM_API_KEY environment variable for Steam API key (for wishlist downloading)
-// Set the 'zenrows' row in the 'keys' table (value column) for scraping steamgifts page
+// Set the 'zenrows' rows in the 'keys' table (value column) for scraping steamgifts page
 // YDB connection:
 // Set YDB_DATABASE : a name for YDB (shown in yandex cloud console)
 func RunSGBOTFunc(ctx context.Context) (*Response, error) {
@@ -177,15 +180,14 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 			fmt.Printf("can't select from 'game' table. %v", err)
 		}
 
-		// read zenrows key
+		// read zenrows keys (all rows, in id order - they go into the rotor)
 		_, res, err = session.Execute(ctxSession, txc,
 			`--!syntax_v1
-			SELECT value FROM keys WHERE type = 'zenrows'
+			SELECT value FROM keys WHERE type = 'zenrows' ORDER BY id
 			`,
 			nil,
 		)
 		if err == nil {
-			rows:
 			for res.NextResultSet(ctxSession) {
 				for res.NextRow() {
 					var keyValue string
@@ -195,12 +197,11 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 						fmt.Printf("error parsing key row. %v", err)
 						continue
 					}
-					r.ZenrowAPIKey = keyValue
-					break rows
+					r.ZenrowAPIKeys = append(r.ZenrowAPIKeys, keyValue)
 				}
 			}
 			res.Close()
-			fmt.Println("zenrows key added")
+			fmt.Println(len(r.ZenrowAPIKeys), "zenrows keys added")
 		} else {
 			fmt.Printf("can't select from 'keys' table. %v", err)
 			return
@@ -212,7 +213,52 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	}
 
 	fmt.Println("request. profile:", r.SteamProfile)
-	digest, err := RunBot(&r)
+	bot := &TheBot{}
+	digest, err := RunBot(bot, &r)
+
+	// after any bot finish (success or error): compare the current key
+	// order with the one read from the db - if it changed (a
+	// 402/AUTH004 rotation happened), persist it in one transaction -
+	// delete the old 'zenrows' rows and insert the rotated ones. Ids
+	// are re-numbered from 1: the id order is the usage order.
+	if bot.zenrowsKeys != nil {
+		newOrder := bot.zenrowsKeys.Order()
+		if !slices.Equal(r.ZenrowAPIKeys, newOrder) {
+			fmt.Println("zenrows key order changed, saving new order", len(newOrder))
+			db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err2 error) {
+				keyRows := make([]types.Value, 0, len(newOrder))
+				for i, k := range newOrder {
+					keyRows = append(keyRows, types.StructValue(
+						types.StructFieldValue("id", types.Uint64Value(uint64(i)+1)),
+						types.StructFieldValue("type", types.UTF8Value("zenrows")),
+						types.StructFieldValue("value", types.UTF8Value(k)),
+					))
+				}
+
+				txc := table.TxControl(
+					table.BeginTx(table.WithSerializableReadWrite()),
+					table.CommitTx(),
+				)
+
+				_, _, err2 = session.Execute(ctxSession, txc,
+					`--!syntax_v1
+					DECLARE $keys AS List<Struct<id: Uint64, type: Utf8, value: Utf8>>;
+
+					DELETE FROM keys WHERE type = 'zenrows';
+
+					INSERT INTO keys (id, type, value)
+					SELECT id, type, value FROM AS_TABLE($keys)
+					`,
+					table.NewQueryParameters(table.ValueParam("$keys", types.ListValue(keyRows...))),
+				)
+				if err2 != nil {
+					fmt.Println("can't update 'keys' order", err2)
+					return
+				}
+				return
+			})
+		}
+	}
 
 	if err != nil {
 		db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err2 error) {

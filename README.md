@@ -26,14 +26,14 @@ Frankly, there are 3 cloud functions: a bot which checks, an email sender and a 
 3. Create service account with editor privileges for YDB
 4. Set `YDB_DATABASE` (this is the location from YDB) environment variables
 5. Finish function creation
-6. Run function once (test). It has to create 4 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:UTF8)` and `keys (id:uint64, name:string, value:string)`
+6. Run function once (test). It has to create 4 tables into YDB: `games (id:uint64, name:string)`, `cookies (name:string, domain:string, path:string, value:string)`, `digest (message:UTF8)` and `keys (id:uint64, type:string, value:string)`
 
 ### Fill the `keys` table
-The bot reads its Zenrows API key from the `keys` table (not from an environment variable). Insert one row per Zenrows key, all with `name = 'zenrows'`:
+The bot reads its Zenrows API keys from the `keys` table (not from an environment variable). Insert one row per Zenrows key, all with `type = 'zenrows'`:
 ```sql
-INSERT INTO keys (id, name, value) VALUES (1, 'zenrows', '<your Zenrows API key>');
+INSERT INTO keys (id, type, value) VALUES (1, 'zenrows', '<your Zenrows API key>');
 ```
-Right now the bot takes only the first `zenrows` key it reads, so put the key you want to use first; adding more `zenrows` rows is the groundwork for key rotation later.
+The bot loads all `zenrows` rows (in `id` order) into a key rotor and starts with the first key. When a request through the Zenrows client gets a `402/AUTH004` ("usage exceeded") answer, the bot rotates to the next key, recreates the client and retries the same page; when all keys are exhausted the bot stops and writes the error to the digest. If at least one rotation happened, after the check (any finish) the bot writes the new key order back to the `keys` table in one transaction: the old `zenrows` rows are deleted and the rotated rows are inserted with ids re-numbered from 1 (the `id` order is the usage order).
 
 ### Create bot function
 1. Run `yandex.sgbot-func.deploy.sh` - it prepares all mandatory files
