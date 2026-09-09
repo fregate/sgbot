@@ -33,7 +33,7 @@ The bot reads its Zenrows API keys from the `keys` table (not from an environmen
 ```sql
 INSERT INTO keys (id, type, value) VALUES (1, 'zenrows', '<your Zenrows API key>');
 ```
-The bot loads all `zenrows` rows (in `id` order) into a key rotor and starts with the first key. When a request through the Zenrows client gets a `402/AUTH004` ("usage exceeded") answer, the bot rotates to the next key, recreates the client and retries the same page; when all keys are exhausted the bot stops and writes the error to the digest.
+The bot loads all `zenrows` rows (in `id` order) into a key rotor and starts with the first key. When a request through the Zenrows client gets a `402/AUTH004` ("usage exceeded") answer, the bot rotates to the next key, recreates the client and retries the same page; when all keys are exhausted the bot stops and writes the error to the digest. If at least one rotation happened, after the check (any finish) the bot writes the new key order back to the `keys` table in one transaction: the old `zenrows` rows are deleted and the rotated rows are inserted with ids re-numbered from 1 (the `id` order is the usage order).
 
 ### Create bot function
 1. Run `yandex.sgbot-func.deploy.sh` - it prepares all mandatory files

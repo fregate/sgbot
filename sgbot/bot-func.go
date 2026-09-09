@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	yc "github.com/yandex-cloud/go-sdk"
@@ -58,8 +59,10 @@ func runCheck(b *TheBot, games map[uint64]bool) (digest []string, err error) {
 	return b.digest, err
 }
 
-func RunBot(botRequest *Request) (digest []string, err error) {
-	bot := &TheBot{}
+// RunBot runs one bot check on the given bot. The caller keeps the bot
+// instance and can inspect it afterwards (for example the key rotor
+// state, to persist rotated zenrows keys).
+func RunBot(bot *TheBot, botRequest *Request) (digest []string, err error) {
 	err = bot.InitBot(botRequest.SteamProfile, botRequest.SteamAPIKey, botRequest.ZenrowAPIKeys)
 	if err != nil {
 		fmt.Println("error during bot initialization.", err)
@@ -210,7 +213,52 @@ func RunSGBOTFunc(ctx context.Context) (*Response, error) {
 	}
 
 	fmt.Println("request. profile:", r.SteamProfile)
-	digest, err := RunBot(&r)
+	bot := &TheBot{}
+	digest, err := RunBot(bot, &r)
+
+	// after any bot finish (success or error): compare the current key
+	// order with the one read from the db - if it changed (a
+	// 402/AUTH004 rotation happened), persist it in one transaction -
+	// delete the old 'zenrows' rows and insert the rotated ones. Ids
+	// are re-numbered from 1: the id order is the usage order.
+	if bot.zenrowsKeys != nil {
+		newOrder := bot.zenrowsKeys.Order()
+		if !slices.Equal(r.ZenrowAPIKeys, newOrder) {
+			fmt.Println("zenrows key order changed, saving new order", len(newOrder))
+			db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err2 error) {
+				keyRows := make([]types.Value, 0, len(newOrder))
+				for i, k := range newOrder {
+					keyRows = append(keyRows, types.StructValue(
+						types.StructFieldValue("id", types.Uint64Value(uint64(i)+1)),
+						types.StructFieldValue("type", types.UTF8Value("zenrows")),
+						types.StructFieldValue("value", types.UTF8Value(k)),
+					))
+				}
+
+				txc := table.TxControl(
+					table.BeginTx(table.WithSerializableReadWrite()),
+					table.CommitTx(),
+				)
+
+				_, _, err2 = session.Execute(ctxSession, txc,
+					`--!syntax_v1
+					DECLARE $keys AS List<Struct<id: Uint64, type: Utf8, value: Utf8>>;
+
+					DELETE FROM keys WHERE type = 'zenrows';
+
+					INSERT INTO keys (id, type, value)
+					SELECT id, type, value FROM AS_TABLE($keys)
+					`,
+					table.NewQueryParameters(table.ValueParam("$keys", types.ListValue(keyRows...))),
+				)
+				if err2 != nil {
+					fmt.Println("can't update 'keys' order", err2)
+					return
+				}
+				return
+			})
+		}
+	}
 
 	if err != nil {
 		db.Table().Do(connectCtx, func(ctxSession context.Context, session table.Session) (err2 error) {
