@@ -28,7 +28,7 @@ Three **independent Go modules** (each with its own `go.mod`/`go.sum`), plus aux
 
 ### `tools/` — Python helpers
 
-- `tools/fg.py` — manual whitelist-triage script (needs `requests_html`, run ad-hoc: `python3 tools/fg.py <steam-profile>`). Fetches the profile's **followed games** list and, for each game, checks the Steam store page and the SteamDB page (release date, Steam user rating, SteamDB %). It prints two lists: games to consider *removing* from followed (low SteamDB rating < 83% or Steam rating ≤ 7), and games to *promote* from followed to wishlist (Steam rating 10 or SteamDB > 93). Purpose: shrink the whitelist the bot enters giveaways for. Nothing in the Go code calls it.
+- `tools/fg.py` — manual whitelist-triage script (needs `requests_html`, run ad-hoc: `python3 tools/fg.py <steam-id> <api-key>`). Fetches the profile's **followed games** list via the Steam Web API (`IStoreService/GetGamesFollowed`, key passed as `id` param, numeric steam id as `steamid` param) and, for each game, checks the Steam store page and the SteamDB page (release date, Steam user rating, SteamDB %). It prints two lists: games to consider *removing* from followed (low SteamDB rating < 83% or Steam rating ≤ 7), and games to *promote* from followed to wishlist (Steam rating 10 or SteamDB > 93). Purpose: shrink the whitelist the bot enters giveaways for. Nothing in the Go code calls it.
 
 ### `sgbot/` file map (single `package main`, no `main()`)
 

@@ -6,7 +6,7 @@ I wish I would win all my followed and wishlisted games ;) But I don't want to w
 
 ## tools/fg.py - narrow your whitelist
 
-A standalone Python helper (`python3 tools/fg.py <steam-profile>`, needs `requests_html`) that fetches your followed-games list and, per game, checks the Steam store rating and the SteamDB rating. It prints two lists: games worth *removing* from followed (low SteamDB rating or low Steam rating) and games worth *promoting* from followed to wishlist (top ratings). Use it to trim the whitelist the bot enters giveaways for. It is not called by any Go code.
+A standalone Python helper (`python3 tools/fg.py <steam-id> <api-key>`, needs `requests_html`) that fetches your followed-games list via the Steam Web API (`IStoreService/GetGamesFollowed`) and, per game, checks the Steam store rating and the SteamDB rating. It prints two lists: games worth *removing* from followed (low SteamDB rating or low Steam rating) and games worth *promoting* from followed to wishlist (top ratings). Use it to trim the whitelist the bot enters giveaways for. It is not called by any Go code.
 
 ## For agents working in this repo
 

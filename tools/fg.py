@@ -1,15 +1,19 @@
 import sys
 import argparse
-import re
 import datetime
 
-from requests_html import HTMLSession
+import requests
+
+storeFrontApi = "https://store.steampowered.com"
+appReviews = "appreviews"
+appInfo = "api/appdetails"
 
 steamGamePage = "https://store.steampowered.com/app/{}/"
 totalItems = 0
 currentItem = 0
 
-wishlistGames = []
+wishlistGames = {}
+gameNames = {}
 
 # Print iterations progress
 def printProgressBar (iteration, total, prefix = 'Progress:', suffix = 'Complete', decimals = 1, length = 100, fill = '>'):
@@ -32,78 +36,61 @@ def printProgressBar (iteration, total, prefix = 'Progress:', suffix = 'Complete
     if iteration == total: 
         print()
 
-def parseGamePage(session, app) :
+def parseGamePage(app) :
     global currentItem
     currentItem = currentItem + 1
     printProgressBar(currentItem, totalItems)
-    link = steamGamePage.format(app)
 
     global wishlistGames
+    global gameNames
 
-    # set cookies
-    cookies = {"wants_mature_content":'1', "birthtime":"60368401", "lastagecheckage":"1-0-1972"}
-    gameAppPage = session.get(link, cookies=cookies)
-    if gameAppPage.url != link :
-        # game removed?
-        return True
-
-    earlyAccessElem = gameAppPage.html.find("div[class='early_access_header']", first=True)
-    if earlyAccessElem != None :
-        # skip early access games - give them a chance
+    link = "/".join([storeFrontApi, appInfo])
+    r = requests.get(link, params={"appids": app, "json": 1})
+    try:
+        gameInfo = r.json()[f"{app}"]["data"]
+    except (ValueError, KeyError, TypeError):
+        print (f"Failed to get {app} info from steam storefront api")
         return False
 
-    releaseDateElem = gameAppPage.html.find('div[class="date"]', first=True)
-    if releaseDateElem == None :
-        # game not released yet - skip
-        return False
+    gameNames[app] = str(gameInfo["name"])
+
+    # is Coming Soon?
+    if gameInfo["release_date"]["date"] == True:
+       return False
 
     try:
-        releaseDate = datetime.datetime.strptime(releaseDateElem.text, "%d %b, %Y")
+        releaseDate = datetime.datetime.strptime(gameInfo["release_date"]["date"], "%d %b, %Y")
     except ValueError:
         # no release date - skip
         return False
 
-    now = datetime.datetime.now()
-    if (now - releaseDate < datetime.timedelta(days=365)):
+    if (datetime.datetime.now() - releaseDate < datetime.timedelta(days=365)):
         # very fresh game to decide
         return False
 
-    ratingValue = gameAppPage.html.find('meta[itemprop="ratingValue"]', first=True)
-    if ratingValue == None :
-        # game not yet released or do not have rating (too less user reviews)
-        return False
+    # is Early Access?
+    ea = next((True for g in gameInfo["genres"] if g["id"] == 70), False)
+    if ea == True:
+       return False
 
-    ratingValueInt = int(ratingValue.attrs["content"])
-    if (ratingValueInt == 10) :
-        # skip - this is cool game
-        wishlistGames.append(link)
-        return False
+    # calculate ratings
+    link = "/".join([storeFrontApi, appReviews, str(app)])
+    r = requests.get(link, params={"num_per_page": 1, "json": 1})
+    try:
+        reviewScore = r.json()["query_summary"]
+    except (ValueError, KeyError, TypeError):
+        print (f"Failed to get {app} reviews from steam storefront api")
+        return
 
-    if (ratingValueInt <= 7 and ratingValueInt != 0) :
-        # very suspicios game - need to check
+    totalReviews = reviewScore["total_reviews"]
+    if totalReviews < 10:
+       return True
+
+    ratingValue = float(reviewScore["total_positive"] / reviewScore["total_reviews"]) * 100
+    if (ratingValue < 83.0): # check this game for relegation
         return True
-
-    # check here for steamdb rating?
-    steamDbPage = "https://steamdb.info/app/{}/"
-    # there is games with very positive and positive rating and released less than year ago and not in EA
-    link = steamDbPage.format(app)
-    dbGamePage = session.get(link)
-    if dbGamePage.url != link :
-        # something strange - check page
-        return True
-
-    ratingValue = dbGamePage.html.find('meta[itemprop="ratingValue"]', first=True)
-    if ratingValue == None :
-        # game not yet released or do not have rating (too many user reviews)
-        return False
-
-    ratingValueFloat = float(ratingValue.attrs["content"])
-    if (ratingValueFloat < 83) :
-        # check this game
-        return True
-    elif (ratingValueFloat > 93) :
-        # possible wishlist game?
-        wishlistGames.append(link)
+    elif (ratingValue > 93.0): # possible promote to wishlist game?
+        wishlistGames[steamGamePage.format(app)] = gameNames.get(app,"")
 
     return False
 
@@ -112,36 +99,35 @@ def main(argv) :
   global totalItems
 
   global wishlistGames
+  global gameNames
 
   print ("Start")
 
   # some defines
-  steamFollowedGamesPage = "https://steamcommunity.com/id/{}/followedgames/"
+  steamApiGetGamesFollowed = "https://api.steampowered.com/IStoreService/GetGamesFollowed/v1/"
 
   parser = argparse.ArgumentParser()
-  parser.add_argument("profile", help="steam profile for parse followed games")
+  parser.add_argument("profile", help="numeric steam id of the profile to get followed games for")
+  parser.add_argument("key", help="steam web api key")
   args = parser.parse_args()
   print ("Profile '{}'".format(args.profile))
 
-  print ("Parse Steam Followed Games List")
-  session = HTMLSession()
-  r = session.get(steamFollowedGamesPage.format(args.profile))
-  
-  pattern = r'\d{1,8}'
-  aaa = {}
-  for ddd in r.html.find("div[class='gameListRowItemName']") :
-      lll = ddd.find("a", first=True)
-      app = re.search(pattern, lll.attrs["href"])[0]
-      aaa[app] = lll.text
+  print ("Get Steam Followed Games List")
+  r = requests.get(steamApiGetGamesFollowed, params={"id": args.key, "steamid": args.profile})
+  try:
+    appids = r.json()["response"]["appids"]
+  except (ValueError, KeyError, TypeError):
+    print ("Failed to get followed games from steam api")
+    return
 
-  print ("Found {} games".format(len(aaa)))
+  totalItems = len(appids)
+  print ("Found {} games".format(totalItems))
 
   currentItem = 0
-  totalItems = len(aaa)
   printProgressBar(currentItem, totalItems)
 
   # single thread solution
-  gamesToCheck = {steamGamePage.format(app):name for app,name in aaa.items() if parseGamePage(session, app)}
+  gamesToCheck = {steamGamePage.format(app):gameNames.get(app,"") for app in appids if parseGamePage(app)}
 
   # print result
   print ("Check these games to remove from followed games")
