@@ -1,0 +1,56 @@
+# Compile check for every pull request.
+#
+# The deploy zips are package main without func main (the Yandex cloud
+# runtime provides the entry point), so `go build` fails at link time;
+# `go vet` does full type-checking without linking — and never runs any
+# code, which matters here because the test files are live E2E tests that
+# must never be executed.
+#
+# Checks per PR:
+#   1. both full modules type-check, including test files
+#   2. every yandex.*deploy.sh file set compiles standalone — this is the
+#      drift failure mode: a helper added to a .go file that is not listed
+#      in the deploy script's hardcoded zip file list
+
+name: Compile check
+
+on:
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sgbot/go.mod
+
+      - name: Type-check full modules (incl. test files)
+        env:
+          GOFLAGS: -mod=mod
+        run: |
+          set -eu
+          (cd sgbot && go vet ./...)
+          (cd gogbot && go vet ./...)
+
+      - name: Run all deploy scripts
+        run: |
+          set -eu
+          for s in yandex.*.deploy.sh; do
+            sh "$s"
+          done
+
+      - name: Type-check each deploy zip's file set standalone
+        env:
+          GOFLAGS: -mod=mod # the zips carry go.mod but no go.sum
+        run: |
+          set -eu
+          for z in *.zip; do
+            D=$(mktemp -d)
+            unzip -q "$z" -d "$D"
+            (cd "$D" && go vet ./...)
+          done

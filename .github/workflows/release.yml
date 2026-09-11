@@ -1,0 +1,120 @@
+# GitHub Release.
+#
+# Runs ALL yandex.*deploy.sh scripts on the selected commit/tag/branch and
+# publishes, as release assets:
+#   - one zip per cloud function (renamed to <name>-<sha>.zip)
+#   - source.tar.gz — `git archive` of the exact commit built
+#
+# Triggers:
+#   - push of a tag matching v* (releases from that tag's commit)
+#   - manual run (Actions -> Release) with optional `ref` and `tag` inputs;
+#     the tag is auto-generated as manual-<date>-<shashort> if not given
+#
+# The zip sets are verified to compile standalone before publishing, the
+# same way as in the compile-check workflow.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit SHA, tag or branch to release from (empty = default branch)"
+        type: string
+        required: false
+        default: ""
+      tag:
+        description: "Release tag name (auto-generated if empty)"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name || 'dispatch' }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0 # allow releasing from an arbitrary commit SHA
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sgbot/go.mod
+
+      - name: Run all deploy scripts
+        run: |
+          set -eu
+          for s in yandex.*.deploy.sh; do
+            sh "$s"
+          done
+
+      - name: Verify each packaged file set compiles standalone
+        # Zips are package main without func main, so `go build` fails at
+        # link time; `go vet` type-checks without linking or running code.
+        env:
+          GOFLAGS: -mod=mod # the zips carry go.mod but no go.sum
+        run: |
+          set -eu
+          for z in *.zip; do
+            D=$(mktemp -d)
+            unzip -q "$z" -d "$D"
+            (cd "$D" && go vet ./...)
+          done
+
+      - name: Rename zips to stable names
+        run: |
+          set -eu
+          SHA=$(git rev-parse HEAD)
+          for z in *.zip; do
+            # strip the script's <date>_<time> suffix: sgbot-2026-09-10_10-05-00.zip -> sgbot.zip
+            base=$(printf '%s' "$z" | sed -E 's/-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.zip$/.zip/')
+            mv "$z" "${base%.zip}-${SHA}.zip"
+          done
+
+      - name: Build source archive
+        run: |
+          set -eu
+          SHA=$(git rev-parse HEAD)
+          git archive --format=tar.gz --prefix="sgbot-${SHA}/" "$SHA" -o source.tar.gz
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          SHA=$(git rev-parse HEAD)
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="manual-$(date +%Y%m%d-%H%M%S)-${SHA:0:7}"
+          fi
+          # Idempotency: re-runs and the tag-push trigger fired by the tag
+          # we push below must not fail on an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — nothing to do."
+            exit 0
+          fi
+          # On manual runs the tag may not exist yet: create it at the built
+          # commit (gh release create would otherwise tag the default branch).
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag "$TAG" "$SHA"
+            git push origin "$TAG"
+          fi
+          NOTES="Built from ${SHA}
+
+Assets:
+- one zip per yandex.*deploy.sh script (cloud function source)
+- source.tar.gz — full source of ${SHA}"
+          gh release create "$TAG" --title "Release $TAG" --notes "$NOTES" *.zip source.tar.gz

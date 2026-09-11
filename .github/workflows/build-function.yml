@@ -1,0 +1,74 @@
+# Manual packaging of a single cloud-function archive.
+#
+# Runs one of the yandex.*deploy.sh scripts (the `function` choice list
+# mirrors the scripts in the repo root — keep in sync when adding or
+# removing them) on the chosen commit/tag/branch and uploads the resulting
+# zip as an artifact, named <function>-<sha>.zip.
+#
+# The zips are package main without func main (the Yandex cloud runtime
+# provides the entry point), so `go build` fails at link time; `go vet`
+# type-checks without linking. `go test` is never run: the test files in
+# this repo are live E2E tests that must never be executed.
+
+name: Build function archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      function:
+        description: "Function to package (one yandex.<name>.deploy.sh script)"
+        type: choice
+        options:
+          - sgbot-func
+          - botinit-func
+          - digest-func
+          - gogbot-func
+        default: sgbot-func
+      ref:
+        description: "Commit SHA, tag or branch to build from (empty = default branch)"
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0 # allow checking out an arbitrary commit SHA
+
+      - name: Run deploy script
+        run: sh "yandex.${{ inputs.function }}.deploy.sh"
+
+      - name: Rename zip to a stable, ref-identifying name
+        id: pkg
+        run: |
+          set -eu
+          SHA=$(git rev-parse HEAD)
+          ZIP=$(ls *.zip)
+          OUT="${{ inputs.function }}-${SHA}.zip"
+          mv "$ZIP" "$OUT"
+          echo "out=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: sgbot/go.mod
+
+      - name: Verify the packaged file set compiles standalone
+        env:
+          GOFLAGS: -mod=mod # the zip carries go.mod but no go.sum
+        run: |
+          set -eu
+          D=$(mktemp -d)
+          unzip -q "${{ steps.pkg.outputs.out }}" -d "$D"
+          (cd "$D" && go vet ./...)
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pkg.outputs.out }}
+          path: ${{ steps.pkg.outputs.out }}
