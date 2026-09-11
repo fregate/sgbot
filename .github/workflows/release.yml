@@ -112,9 +112,5 @@ jobs:
             git tag "$TAG" "$SHA"
             git push origin "$TAG"
           fi
-          NOTES="Built from ${SHA}
-
-Assets:
-- one zip per yandex.*deploy.sh script (cloud function source)
-- source.tar.gz — full source of ${SHA}"
+          NOTES=$(printf 'Built from %s\n\nAssets:\n- one zip per yandex.*deploy.sh script (cloud function source)\n- source.tar.gz — full source of %s' "$SHA" "$SHA")
           gh release create "$TAG" --title "Release $TAG" --notes "$NOTES" *.zip source.tar.gz
